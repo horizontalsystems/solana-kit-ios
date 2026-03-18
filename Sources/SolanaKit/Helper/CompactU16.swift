@@ -8,6 +8,7 @@ import Foundation
 enum CompactU16 {
     /// Encodes `value` (0–65535) as compact-u16 bytes.
     static func encode(_ value: Int) -> Data {
+        precondition(value >= 0 && value <= 65535, "CompactU16.encode: value \(value) out of range 0–65535")
         var remaining = value
         var result = Data()
         repeat {
@@ -25,6 +26,7 @@ enum CompactU16 {
     ///
     /// - Returns: A tuple containing the decoded value and the number of bytes consumed.
     static func decode(_ data: Data) -> (value: Int, bytesRead: Int) {
+        precondition(!data.isEmpty, "CompactU16.decode: called with empty data")
         var value = 0
         var bytesRead = 0
         var shift = 0
