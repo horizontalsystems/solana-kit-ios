@@ -8,6 +8,8 @@
 protocol IRpcApiProvider {
     var source: String { get }
     func fetch<T>(rpc: JsonRpc<T>) async throws -> T
+    func fetchBatch<T>(rpcs: [JsonRpc<T>]) async throws -> [T?]
+    func fetchTransactionsBatch(signatures: [String]) async throws -> [String: RpcTransactionResponse]
 }
 
 // MARK: - Storage protocols
@@ -67,4 +69,53 @@ protocol IMainStorage {
 
     /// Marks initial sync as complete. Idempotent — safe to call multiple times.
     func setInitialSynced() throws
+}
+
+// MARK: - IRpcApiProvider typed convenience API
+
+/// Default implementations wrapping `fetch(rpc:)` with typed `JsonRpc` subclasses.
+///
+/// Managers call these methods directly; no manager needs to know about `JsonRpc` internals.
+extension IRpcApiProvider {
+    func getBalance(address: String) async throws -> Int64 {
+        try await fetch(rpc: GetBalanceJsonRpc(address: address))
+    }
+
+    func getBlockHeight() async throws -> Int64 {
+        try await fetch(rpc: GetBlockHeightJsonRpc())
+    }
+
+    func getTokenAccountsByOwner(address: String) async throws -> [RpcKeyedAccount] {
+        try await fetch(rpc: GetTokenAccountsByOwnerJsonRpc(ownerAddress: address))
+    }
+
+    func getSignaturesForAddress(
+        address: String,
+        limit: Int? = nil,
+        before: String? = nil,
+        until: String? = nil
+    ) async throws -> [SignatureInfo] {
+        try await fetch(rpc: GetSignaturesForAddressJsonRpc(
+            address: address,
+            limit: limit,
+            before: before,
+            until: until
+        ))
+    }
+
+    func getTransaction(signature: String) async throws -> RpcTransactionResponse? {
+        try await fetch(rpc: GetTransactionJsonRpc(signature: signature))
+    }
+
+    func sendTransaction(serializedBase64: String) async throws -> String {
+        try await fetch(rpc: SendTransactionJsonRpc(base64EncodedTransaction: serializedBase64))
+    }
+
+    func getLatestBlockhash() async throws -> RpcBlockhashResponse {
+        try await fetch(rpc: GetLatestBlockhashJsonRpc())
+    }
+
+    func getMultipleAccounts(addresses: [String]) async throws -> [BufferInfo?] {
+        try await fetch(rpc: GetMultipleAccountsJsonRpc(addresses: addresses))
+    }
 }

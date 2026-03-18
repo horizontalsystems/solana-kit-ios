@@ -52,6 +52,91 @@ extension RpcApiProvider: IRpcApiProvider {
         currentRpcId += 1
         return try await rpcResult(rpc: rpc, parameters: rpc.parameters(id: currentRpcId))
     }
+
+    /// Sends a JSON-RPC batch request.
+    ///
+    /// Alamofire's `JSONEncoding` only supports `[String: Any]` as the top-level body,
+    /// so this method builds the request manually with `URLSession`.
+    ///
+    /// Each `rpc` is assigned an `id` equal to its index (0-based).
+    /// The returned array is parallel to the input: `result[i]` corresponds to `rpcs[i]`.
+    /// A `nil` entry means the node returned no result for that request or parsing failed.
+    func fetchBatch<T>(rpcs: [JsonRpc<T>]) async throws -> [T?] {
+        guard !rpcs.isEmpty else { return [] }
+
+        let requestArray = rpcs.enumerated().map { $0.element.parameters(id: $0.offset) }
+        let bodyData = try JSONSerialization.data(withJSONObject: requestArray, options: [])
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = bodyData
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        for header in headers {
+            request.setValue(header.value, forHTTPHeaderField: header.name)
+        }
+
+        let (data, _) = try await URLSession.shared.data(for: request)
+
+        guard
+            let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []),
+            let responseArray = jsonObject as? [[String: Any]]
+        else {
+            throw RequestError.invalidResponse(jsonObject: data)
+        }
+
+        var results: [T?] = Array(repeating: nil, count: rpcs.count)
+        for dict in responseArray {
+            guard
+                let id = dict["id"] as? Int,
+                id >= 0, id < rpcs.count,
+                let rpcResponse = JsonRpcResponse.response(jsonObject: dict)
+            else { continue }
+
+            results[id] = try? rpcs[id].parse(response: rpcResponse)
+        }
+        return results
+    }
+}
+
+// MARK: - Batch Transaction Convenience
+
+extension RpcApiProvider {
+    /// Fetches multiple transactions by signature in parallel batch requests.
+    ///
+    /// Chunks `signatures` into groups of `batchChunkSize` (100, matching Android's
+    /// `TransactionSyncer.batchChunkSize`), issues one batch RPC request per chunk,
+    /// and returns a dictionary keyed by signature.
+    ///
+    /// Signatures for which the node returns null or a parse failure are omitted from the result.
+    func fetchTransactionsBatch(signatures: [String]) async throws -> [String: RpcTransactionResponse] {
+        let batchChunkSize = 100
+        var result: [String: RpcTransactionResponse] = [:]
+
+        let chunks = signatures.chunked(into: batchChunkSize)
+        for chunk in chunks {
+            let rpcs = chunk.map { GetTransactionJsonRpc(signature: $0) }
+            let responses: [RpcTransactionResponse??] = try await fetchBatch(rpcs: rpcs)
+            for (signature, maybeResponse) in zip(chunk, responses) {
+                if let outerOpt = maybeResponse, let tx = outerOpt {
+                    result[signature] = tx
+                }
+            }
+        }
+
+        return result
+    }
+}
+
+// MARK: - Array chunk helper
+
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0 else { return [] }
+        return stride(from: 0, to: count, by: size).map {
+            Array(self[$0 ..< Swift.min($0 + size, count)])
+        }
+    }
 }
 
 // MARK: - RequestInterceptor (Alamofire retry)
