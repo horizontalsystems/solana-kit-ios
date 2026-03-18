@@ -38,7 +38,7 @@ This project is part of a multi-repo workspace. The planner works inside `solana
 - [x] **3.4 TransactionSyncer** — History sync: fetch signatures → fetch full transactions → parse pre/post balance changes → detect token transfers → resolve mint metadata → persist. Batch RPC. **Largest single component.** Android ref: `TransactionSyncer.kt` + `Extensions.kt` + `NftClient.kt`
 - [x] **3.5 PendingTransactionSyncer** — Monitor unconfirmed transactions: poll by block height, re-broadcast same base64 tx if blockhash still valid, mark failed if expired
 - [x] **3.6 TransactionManager** — Aggregation layer: combine confirmed + pending txs, filter by SOL/SPL/direction, expose as publisher
-- [ ] **3.7 SyncManager** — Central orchestrator: start/stop all syncers, coordinate listener callbacks, track initial sync completion, propagate sync state
+- [x] **3.7 SyncManager** — Central orchestrator: start/stop all syncers, coordinate listener callbacks, track initial sync completion, propagate sync state
 
 ### Phase 4: Facade & Signing
 

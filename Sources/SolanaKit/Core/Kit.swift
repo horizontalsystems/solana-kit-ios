@@ -265,7 +265,9 @@ public class Kit {
         let syncManager = SyncManager(
             apiSyncer: apiSyncer,
             balanceManager: balanceManager,
-            tokenAccountManager: tokenAccountManager
+            tokenAccountManager: tokenAccountManager,
+            transactionSyncer: transactionSyncer,
+            transactionManager: transactionManager
         )
 
         // Wire delegates: ApiSyncer → SyncManager → Kit
@@ -273,10 +275,6 @@ public class Kit {
         balanceManager.delegate = syncManager
         tokenAccountManager.delegate = syncManager
         transactionSyncer.delegate = syncManager
-
-        // Inject transaction subsystems into SyncManager (post-init injection).
-        syncManager.transactionSyncer = transactionSyncer
-        syncManager.transactionManager = transactionManager
 
         let kit = Kit(
             connectionManager: connectionManager,
@@ -307,12 +305,12 @@ public class Kit {
     /// Starts all subsystems (network monitoring, sync timers, etc.).
     public func start() {
         connectionManager.start()
-        apiSyncer.start()
+        syncManager.start()
     }
 
     /// Stops all subsystems cleanly.
     public func stop() {
-        apiSyncer.stop()
+        syncManager.stop()
         connectionManager.stop()
     }
 
@@ -323,12 +321,12 @@ public class Kit {
 
     /// Temporarily suspends polling without tearing down the connection monitor.
     public func pause() {
-        apiSyncer.pause()
+        syncManager.pause()
     }
 
     /// Resumes polling after a `pause()` call.
     public func resume() {
-        apiSyncer.resume()
+        syncManager.resume()
     }
 }
 

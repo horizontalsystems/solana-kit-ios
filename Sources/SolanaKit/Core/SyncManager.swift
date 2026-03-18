@@ -20,28 +20,8 @@ class SyncManager {
     private let apiSyncer: ApiSyncer
     private let balanceManager: BalanceManager
     private let tokenAccountManager: TokenAccountManager
-
-    // MARK: - Optional subsystems (wired in Kit.instance() — set after init)
-
-    /// Transaction syncer — injected after init by `Kit.instance()`.
-    var transactionSyncer: TransactionSyncer?
-
-    /// Transaction manager — injected after init by `Kit.instance()`.
-    var transactionManager: TransactionManager? {
-        didSet {
-            guard let tm = transactionManager else { return }
-            // When new transactions arrive:
-            // 1. Refresh the SOL balance (mirrors Android cross-cutting subscription).
-            // 2. Forward the batch to Kit via the sync manager delegate.
-            transactionManagerCancellable = tm.transactionsPublisher
-                .sink { [weak self] transactions in
-                    Task { [weak self] in
-                        await self?.balanceManager.sync()
-                    }
-                    self?.delegate?.didUpdate(transactions: transactions)
-                }
-        }
-    }
+    private let transactionSyncer: TransactionSyncer
+    private let transactionManager: TransactionManager
 
     // MARK: - Delegate (weak — Kit holds SyncManager, not the other way around)
 
@@ -49,6 +29,7 @@ class SyncManager {
 
     // MARK: - Private state
 
+    private var started: Bool = false
     private var transactionManagerCancellable: AnyCancellable?
 
     // MARK: - Convenience computed accessors
@@ -65,15 +46,72 @@ class SyncManager {
 
     /// Current transaction sync state, read directly from `TransactionSyncer`.
     var transactionsSyncState: SyncState {
-        transactionSyncer?.syncState ?? .notSynced(error: SyncError.notStarted)
+        transactionSyncer.syncState
     }
 
     // MARK: - Init
 
-    init(apiSyncer: ApiSyncer, balanceManager: BalanceManager, tokenAccountManager: TokenAccountManager) {
+    init(
+        apiSyncer: ApiSyncer,
+        balanceManager: BalanceManager,
+        tokenAccountManager: TokenAccountManager,
+        transactionSyncer: TransactionSyncer,
+        transactionManager: TransactionManager
+    ) {
         self.apiSyncer = apiSyncer
         self.balanceManager = balanceManager
         self.tokenAccountManager = tokenAccountManager
+        self.transactionSyncer = transactionSyncer
+        self.transactionManager = transactionManager
+    }
+
+    // MARK: - Lifecycle
+
+    /// Starts all sync subsystems. Guards against double-start.
+    ///
+    /// Subscribes to `TransactionManager.transactionsPublisher` so that every new
+    /// transaction batch triggers a SOL balance refresh and is forwarded to `Kit`.
+    /// Mirrors Android `SyncManager.start()` (lines 33–47).
+    func start() {
+        guard !started else { return }
+        started = true
+
+        apiSyncer.start()
+
+        // When new transactions arrive: refresh SOL balance and forward the batch to Kit.
+        transactionManagerCancellable = transactionManager.transactionsPublisher
+            .sink { [weak self] transactions in
+                Task { [weak self] in
+                    await self?.balanceManager.sync()
+                }
+                self?.delegate?.didUpdate(transactions: transactions)
+            }
+    }
+
+    /// Stops all sync subsystems and tears down the Combine subscription.
+    ///
+    /// Mirrors Android `SyncManager.stop()` (lines 49–55).
+    func stop() {
+        started = false
+        apiSyncer.stop()
+        balanceManager.stop()
+        tokenAccountManager.stop()
+        transactionSyncer.stop()
+        transactionManagerCancellable = nil
+    }
+
+    /// Temporarily suspends polling without tearing down the connection monitor.
+    ///
+    /// Mirrors Android `SyncManager.pause()`.
+    func pause() {
+        apiSyncer.pause()
+    }
+
+    /// Resumes polling after a `pause()` call.
+    ///
+    /// Mirrors Android `SyncManager.resume()`.
+    func resume() {
+        apiSyncer.resume()
     }
 
     // MARK: - Refresh
@@ -89,7 +127,7 @@ class SyncManager {
             Task { [weak self] in
                 await self?.balanceManager.sync()
                 await self?.tokenAccountManager.sync()
-                await self?.transactionSyncer?.sync()
+                await self?.transactionSyncer.sync()
             }
         } else {
             apiSyncer.stop()
@@ -118,7 +156,7 @@ extension SyncManager: IApiSyncerDelegate {
         case .notReady(let error):
             balanceManager.stop(error: error)
             tokenAccountManager.stop(error: error)
-            transactionSyncer?.stop(error: error)
+            transactionSyncer.stop(error: error)
         }
     }
 
@@ -131,7 +169,7 @@ extension SyncManager: IApiSyncerDelegate {
         Task { [weak self] in
             await self?.balanceManager.sync()
             await self?.tokenAccountManager.sync()
-            await self?.transactionSyncer?.sync()
+            await self?.transactionSyncer.sync()
         }
     }
 }
