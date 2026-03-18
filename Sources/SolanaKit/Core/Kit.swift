@@ -71,6 +71,27 @@ public class Kit {
         transactionsSubject.eraseToAnyPublisher()
     }
 
+    /// Returns a publisher that emits all transactions, optionally filtered by direction.
+    ///
+    /// When `incoming` is `nil`, all transactions are included.
+    /// When set, includes only transactions with a SOL transfer or SPL token transfer
+    /// in the given direction. Empty batches are suppressed.
+    public func allTransactionsPublisher(incoming: Bool? = nil) -> AnyPublisher<[FullTransaction], Never> {
+        transactionManager.allTransactionsPublisher(incoming: incoming)
+    }
+
+    /// Returns a publisher that emits only SOL-transfer transactions,
+    /// optionally filtered by direction. Empty batches are suppressed.
+    public func solTransactionsPublisher(incoming: Bool? = nil) -> AnyPublisher<[FullTransaction], Never> {
+        transactionManager.solTransactionsPublisher(incoming: incoming)
+    }
+
+    /// Returns a publisher that emits only SPL token transactions for the given mint,
+    /// optionally filtered by direction. Empty batches are suppressed.
+    public func splTransactionsPublisher(mintAddress: String, incoming: Bool? = nil) -> AnyPublisher<[FullTransaction], Never> {
+        transactionManager.splTransactionsPublisher(mintAddress: mintAddress, incoming: incoming)
+    }
+
     // MARK: - Public synchronous accessors
 
     /// The last known SOL balance (in SOL). Returns the subject's current value.
@@ -210,7 +231,7 @@ public class Kit {
             mainStorage: mainStorage
         )
 
-        let transactionManager = TransactionManager(storage: transactionStorage)
+        let transactionManager = TransactionManager(address: address, storage: transactionStorage)
 
         let pendingTransactionSyncer = PendingTransactionSyncer(
             rpcApiProvider: rpcApiProvider,

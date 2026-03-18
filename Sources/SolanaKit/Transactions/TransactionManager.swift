@@ -13,6 +13,7 @@ final class TransactionManager {
 
     // MARK: - Dependencies
 
+    private let address: String
     private let storage: ITransactionStorage
 
     // MARK: - Combine
@@ -26,8 +27,89 @@ final class TransactionManager {
 
     // MARK: - Init
 
-    init(storage: ITransactionStorage) {
+    init(address: String, storage: ITransactionStorage) {
+        self.address = address
         self.storage = storage
+    }
+
+    // MARK: - Private filter helpers
+
+    /// Returns `true` when the transaction represents a SOL transfer that matches
+    /// the optional direction filter.
+    ///
+    /// Mirrors Android `TransactionManager` lines 115–122.
+    private func hasSolTransfer(_ transaction: FullTransaction, incoming: Bool?) -> Bool {
+        guard let amount = transaction.transaction.decimalAmount, amount > 0 else {
+            return false
+        }
+        guard let incoming = incoming else {
+            return true
+        }
+        return incoming ? transaction.transaction.to == address : transaction.transaction.from == address
+    }
+
+    /// Returns `true` when at least one token transfer matches the given mint address
+    /// and optional direction filter.
+    ///
+    /// Mirrors Android `TransactionManager` lines 124–129.
+    private func hasSplTransfer(mintAddress: String, tokenTransfers: [FullTokenTransfer], incoming: Bool?) -> Bool {
+        tokenTransfers.contains { fullTransfer in
+            guard fullTransfer.mintAccount.address == mintAddress else { return false }
+            guard let incoming = incoming else { return true }
+            return fullTransfer.tokenTransfer.incoming == incoming
+        }
+    }
+
+    // MARK: - Filtered publishers
+
+    /// Publisher that emits all transactions, optionally filtered by direction.
+    ///
+    /// When `incoming` is `nil`, all transactions pass through.
+    /// When set, keeps only transactions that have a SOL transfer in the given direction
+    /// OR at least one SPL token transfer in the given direction.
+    /// Empty batches are suppressed.
+    ///
+    /// Mirrors Android `_transactionsFlow.map { }.filter { it.isNotEmpty() }`.
+    func allTransactionsPublisher(incoming: Bool? = nil) -> AnyPublisher<[FullTransaction], Never> {
+        transactionsSubject
+            .map { [weak self] transactions -> [FullTransaction] in
+                guard let incoming = incoming else {
+                    return transactions
+                }
+                guard let self = self else { return [] }
+                return transactions.filter { tx in
+                    self.hasSolTransfer(tx, incoming: incoming) ||
+                    tx.tokenTransfers.contains { $0.tokenTransfer.incoming == incoming }
+                }
+            }
+            .filter { !$0.isEmpty }
+            .eraseToAnyPublisher()
+    }
+
+    /// Publisher that emits only transactions containing a SOL transfer, optionally
+    /// filtered by direction. Empty batches are suppressed.
+    func solTransactionsPublisher(incoming: Bool? = nil) -> AnyPublisher<[FullTransaction], Never> {
+        transactionsSubject
+            .map { [weak self] transactions -> [FullTransaction] in
+                guard let self = self else { return [] }
+                return transactions.filter { self.hasSolTransfer($0, incoming: incoming) }
+            }
+            .filter { !$0.isEmpty }
+            .eraseToAnyPublisher()
+    }
+
+    /// Publisher that emits only transactions containing an SPL token transfer for
+    /// the given mint, optionally filtered by direction. Empty batches are suppressed.
+    func splTransactionsPublisher(mintAddress: String, incoming: Bool? = nil) -> AnyPublisher<[FullTransaction], Never> {
+        transactionsSubject
+            .map { [weak self] transactions -> [FullTransaction] in
+                guard let self = self else { return [] }
+                return transactions.filter {
+                    self.hasSplTransfer(mintAddress: mintAddress, tokenTransfers: $0.tokenTransfers, incoming: incoming)
+                }
+            }
+            .filter { !$0.isEmpty }
+            .eraseToAnyPublisher()
     }
 
     // MARK: - Handle
