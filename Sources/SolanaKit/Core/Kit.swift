@@ -217,6 +217,26 @@ public class Kit {
         try await transactionManager.sendSpl(mintAddress: mintAddress, toAddress: toAddress, amount: amount, signer: signer)
     }
 
+    /// Signs, broadcasts, and persists an externally-built raw transaction.
+    ///
+    /// Use this for transactions constructed outside the kit (e.g. Jupiter swap transactions)
+    /// that arrive as raw wire bytes with a placeholder fee-payer signature. The kit signs the
+    /// message bytes with `signer`, replaces the fee-payer slot, broadcasts, and tracks the
+    /// pending transaction via `PendingTransactionSyncer`.
+    ///
+    /// Both legacy and V0 versioned transactions (with address lookup tables) are supported.
+    ///
+    /// - Parameters:
+    ///   - rawTransaction: Raw wire-format transaction bytes (NOT base64-encoded).
+    ///   - signer: An Ed25519 `Signer` for the fee-payer's wallet.
+    /// - Returns: The pending `FullTransaction` that was broadcast and persisted.
+    /// - Throws: Serialization errors or RPC errors on broadcast failure.
+    ///
+    /// Mirrors Android `SolanaKit.sendRawTransaction()`.
+    public func sendRawTransaction(rawTransaction: Data, signer: Signer) async throws -> FullTransaction {
+        try await transactionManager.sendRawTransaction(rawTransaction: rawTransaction, signer: signer)
+    }
+
     // MARK: - Init
 
     private init(

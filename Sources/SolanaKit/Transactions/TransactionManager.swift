@@ -404,6 +404,89 @@ final class TransactionManager {
         return fullTx
     }
 
+    // MARK: - Send Raw Transaction
+
+    /// Deserializes, signs, broadcasts, persists, and emits an externally-built transaction.
+    ///
+    /// Designed for externally-constructed transactions (e.g. Jupiter swap transactions) that
+    /// arrive as raw wire bytes with a placeholder (all-zero) fee-payer signature. The caller
+    /// provides a `Signer` whose key material matches the fee payer embedded in the message.
+    ///
+    /// Steps mirror Android `SolanaKit.sendRawTransaction()`:
+    /// 1. Deserialize raw bytes → `(signatures, message)`.
+    /// 2. Re-serialize message bytes (includes `0x80` prefix for V0, per `serialize(message:)`).
+    /// 3. Sign message bytes with `signer`.
+    /// 4. Replace the fee-payer signature slot (index 0) with the new signature.
+    /// 5. Re-serialize the full transaction and base64-encode.
+    /// 6. Broadcast via `sendTransaction`.
+    /// 7. Fetch fresh blockhash for `lastValidBlockHeight` (pending-tx expiry tracking).
+    /// 8. Estimate fee from ComputeBudget instructions.
+    /// 9. Persist a pending `Transaction` record and emit via `transactionsSubject`.
+    ///
+    /// - Parameters:
+    ///   - rawTransaction: Raw wire-format transaction bytes (NOT base64-encoded).
+    ///   - signer: The `Signer` holding the fee-payer's Ed25519 keypair.
+    /// - Returns: The pending `FullTransaction` that was broadcast and persisted.
+    /// - Throws: Serialization errors or RPC errors on broadcast failure.
+    func sendRawTransaction(rawTransaction: Data, signer: Signer) async throws -> FullTransaction {
+        // 1. Deserialize.
+        var (signatures, message) = try SolanaSerializer.deserialize(transactionData: rawTransaction)
+
+        // 2. Re-serialize the message bytes — this is the data that must be signed.
+        //    For V0 messages `serialize(message:)` prepends 0x80, matching the wire format.
+        let messageBytes = SolanaSerializer.serialize(message: message)
+
+        // 3. Sign with the fee payer's key.
+        let signature = try signer.sign(data: messageBytes)
+
+        // 4. Replace the fee-payer signature slot (always index 0).
+        if signatures.isEmpty {
+            signatures = [signature]
+        } else {
+            signatures[0] = signature
+        }
+
+        // 5. Re-serialize the full signed transaction.
+        let txData = try SolanaSerializer.serialize(signatures: signatures, message: message)
+        let base64Tx = txData.base64EncodedString()
+
+        // 6. Broadcast.
+        let txHash = try await rpcApiProvider.sendTransaction(serializedBase64: base64Tx)
+
+        // 7. Fetch fresh blockhash for lastValidBlockHeight (pending-tx expiry tracking).
+        let blockhashResponse = try await rpcApiProvider.getLatestBlockhash()
+
+        // 8. Estimate fee from ComputeBudget instructions.
+        let feeSol = ComputeBudgetProgram.calculateFee(from: message, baseFeeLamports: Kit.baseFeeLamports)
+
+        // 9. Construct pending Transaction record.
+        //    blockHash comes from the message itself; lastValidBlockHeight from the fresh poll.
+        let blockHashString = Base58.encode(message.recentBlockhash)
+        let transaction = Transaction(
+            hash: txHash,
+            timestamp: Int64(Date().timeIntervalSince1970),
+            fee: "\(feeSol)",
+            from: address,
+            to: nil,
+            amount: nil,
+            pending: true,
+            blockHash: blockHashString,
+            lastValidBlockHeight: blockhashResponse.lastValidBlockHeight,
+            base64Encoded: base64Tx,
+            retryCount: 0
+        )
+
+        // 10. Persist and emit.
+        try? storage.save(transactions: [transaction])
+        let fullTx = FullTransaction(transaction: transaction, tokenTransfers: [])
+        DispatchQueue.main.async { [weak self] in
+            self?.transactionsSubject.send([fullTx])
+        }
+
+        // 11. Return.
+        return fullTx
+    }
+
     // MARK: - Private helpers
 
     /// Returns the two ComputeBudget priority fee instructions used in every send transaction.

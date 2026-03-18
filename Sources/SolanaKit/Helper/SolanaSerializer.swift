@@ -13,6 +13,14 @@ enum SolanaSerializer {
 
     // MARK: - Nested types
 
+    /// Solana message version — legacy (no prefix) or v0 (prefixed with `0x80`).
+    ///
+    /// Mirrors sol4k `TransactionMessage.MessageVersion`.
+    enum MessageVersion {
+        case legacy
+        case v0
+    }
+
     struct MessageHeader {
         /// Total number of accounts that must sign (writable-signers + readonly-signers).
         let numRequiredSignatures: UInt8
@@ -31,6 +39,18 @@ enum SolanaSerializer {
         let data: Data
     }
 
+    /// A reference to an on-chain address lookup table embedded in a V0 message.
+    ///
+    /// Mirrors sol4k `CompiledAddressLookupTable`.
+    struct CompiledAddressLookupTable {
+        /// The public key of the address lookup table account.
+        let publicKey: PublicKey
+        /// Indices into the lookup table for accounts that are writable.
+        let writableIndexes: [UInt8]
+        /// Indices into the lookup table for accounts that are read-only.
+        let readonlyIndexes: [UInt8]
+    }
+
     struct CompiledMessage {
         let header: MessageHeader
         /// All unique account keys in canonical order:
@@ -39,6 +59,10 @@ enum SolanaSerializer {
         /// Raw 32-byte blockhash (already decoded from Base58).
         let recentBlockhash: Data
         let instructions: [CompiledInstruction]
+        /// Message format version. `.legacy` for all compile-generated messages.
+        let version: MessageVersion
+        /// Address lookup tables referenced by this message. Empty for legacy messages.
+        let addressLookupTables: [CompiledAddressLookupTable]
     }
 
     // MARK: - Errors
@@ -171,7 +195,9 @@ enum SolanaSerializer {
             header: header,
             accountKeys: accountKeys,
             recentBlockhash: blockhashData,
-            instructions: compiledInstructions
+            instructions: compiledInstructions,
+            version: .legacy,
+            addressLookupTables: []
         )
     }
 
@@ -179,24 +205,45 @@ enum SolanaSerializer {
 
     /// Serializes a `CompiledMessage` to the Solana wire format.
     ///
-    /// Layout:
+    /// **Legacy** layout:
     /// ```
-    /// [1]          header.numRequiredSignatures
-    /// [1]          header.numReadonlySignedAccounts
-    /// [1]          header.numReadonlyUnsignedAccounts
+    /// [1]           header.numRequiredSignatures
+    /// [1]           header.numReadonlySignedAccounts
+    /// [1]           header.numReadonlyUnsignedAccounts
     /// [compact-u16] accountKeys.count
-    /// [32 * n]     accountKeys (raw bytes, in order)
-    /// [32]         recentBlockhash
+    /// [32 * n]      accountKeys (raw bytes, in order)
+    /// [32]          recentBlockhash
     /// [compact-u16] instructions.count
     /// for each instruction:
-    ///   [1]          programIdIndex
+    ///   [1]           programIdIndex
     ///   [compact-u16] accountIndices.count
-    ///   [1 * m]      accountIndices
+    ///   [1 * m]       accountIndices
     ///   [compact-u16] data.count
-    ///   [N]          data
+    ///   [N]           data
     /// ```
+    ///
+    /// **V0** layout — same as legacy but with a `0x80` version prefix prepended
+    /// and an address lookup tables section appended after instructions:
+    /// ```
+    /// [1]           0x80 (version prefix)
+    /// ... (same header + accounts + blockhash + instructions as legacy) ...
+    /// [compact-u16] addressLookupTables.count
+    /// for each table:
+    ///   [32]          table.publicKey
+    ///   [compact-u16] writableIndexes.count
+    ///   [N]           writableIndexes
+    ///   [compact-u16] readonlyIndexes.count
+    ///   [N]           readonlyIndexes
+    /// ```
+    ///
+    /// Mirrors sol4k `TransactionMessage.serialize()`.
     static func serialize(message: CompiledMessage) -> Data {
         var result = Data()
+
+        // V0 messages begin with a version prefix byte (0x80).
+        if case .v0 = message.version {
+            result.append(0x80)
+        }
 
         // Header (3 bytes).
         result.append(message.header.numRequiredSignatures)
@@ -220,6 +267,18 @@ enum SolanaSerializer {
             result.append(contentsOf: ix.accountIndices)
             result.append(contentsOf: CompactU16.encode(ix.data.count))
             result.append(contentsOf: ix.data)
+        }
+
+        // V0 messages append the address lookup tables section.
+        if case .v0 = message.version {
+            result.append(contentsOf: CompactU16.encode(message.addressLookupTables.count))
+            for table in message.addressLookupTables {
+                result.append(contentsOf: table.publicKey.data)
+                result.append(contentsOf: CompactU16.encode(table.writableIndexes.count))
+                result.append(contentsOf: table.writableIndexes)
+                result.append(contentsOf: CompactU16.encode(table.readonlyIndexes.count))
+                result.append(contentsOf: table.readonlyIndexes)
+            }
         }
 
         return result
@@ -259,12 +318,12 @@ enum SolanaSerializer {
     ///
     /// Handles two formats:
     /// - **Legacy** (no version prefix): compact-u16 sig count → signatures → message bytes
-    /// - **Versioned v0** (prefix byte `0x80`): same structure, but the message begins with a
-    ///   version byte (`0x80`) before the 3-byte header. Any address lookup table data appended
-    ///   after the instructions is silently skipped (not needed for fee estimation).
+    /// - **Versioned v0** (prefix byte `0x80`): version byte → header → accounts → blockhash →
+    ///   instructions → address lookup tables section.
     ///
     /// Detection: after the signatures, if the next byte is `< 0x80` it is the legacy message
-    /// `numRequiredSignatures` field. If `>= 0x80` it is a version prefix — consumed and discarded.
+    /// `numRequiredSignatures` field. If `>= 0x80` it is a version prefix — consumed and recorded.
+    /// The returned `CompiledMessage` carries the detected `version` and any parsed `addressLookupTables`.
     ///
     /// - Parameter transactionData: Raw transaction wire bytes (NOT base64-encoded).
     /// - Returns: A tuple of the parsed signatures and the reconstructed `CompiledMessage`.
@@ -315,12 +374,16 @@ enum SolanaSerializer {
         // ── 3. Detect message version ──────────────────────────────────────────
         // After the signatures the next byte is either:
         //   • numRequiredSignatures (< 0x80) → legacy message; do NOT consume it.
-        //   • A version prefix (>= 0x80)     → versioned message; consume and discard.
+        //   • A version prefix (>= 0x80)     → versioned message; consume and record.
         guard cursor < transactionData.endIndex else {
             throw SerializerError.invalidTransactionData("No message data after signatures")
         }
+        let messageVersion: MessageVersion
         if transactionData[cursor] >= 0x80 {
-            cursor += 1  // skip version byte
+            messageVersion = .v0
+            cursor += 1  // consume version byte
+        } else {
+            messageVersion = .legacy
         }
 
         // ── 4. Message header (3 bytes) ────────────────────────────────────────
@@ -373,14 +436,43 @@ enum SolanaSerializer {
             ))
         }
 
-        // For versioned v0 transactions additional address lookup table entries may follow.
-        // They are not needed for fee estimation so we silently skip them.
+        // ── 8. Address lookup tables (V0 only) ────────────────────────────────
+        var addressLookupTables = [CompiledAddressLookupTable]()
+        if case .v0 = messageVersion, cursor < transactionData.endIndex {
+            let tableCount = try readCompactU16()
+            addressLookupTables.reserveCapacity(tableCount)
+            for _ in 0..<tableCount {
+                // 32-byte public key.
+                let keyData = try read(32)
+                let tableKey: PublicKey
+                do {
+                    tableKey = try PublicKey(data: keyData)
+                } catch {
+                    throw SerializerError.invalidTransactionData(
+                        "Invalid ALT public key at offset \(cursor - transactionData.startIndex - 32)"
+                    )
+                }
+                // Writable indexes.
+                let writableCount = try readCompactU16()
+                let writableData = try read(writableCount)
+                // Readonly indexes.
+                let readonlyCount = try readCompactU16()
+                let readonlyData = try read(readonlyCount)
+                addressLookupTables.append(CompiledAddressLookupTable(
+                    publicKey: tableKey,
+                    writableIndexes: [UInt8](writableData),
+                    readonlyIndexes: [UInt8](readonlyData)
+                ))
+            }
+        }
 
         let compiledMessage = CompiledMessage(
             header: header,
             accountKeys: accountKeys,
             recentBlockhash: recentBlockhash,
-            instructions: instructions
+            instructions: instructions,
+            version: messageVersion,
+            addressLookupTables: addressLookupTables
         )
 
         return (signatures: signatures, message: compiledMessage)
