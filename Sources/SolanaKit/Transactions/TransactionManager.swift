@@ -15,6 +15,7 @@ final class TransactionManager {
 
     private let address: String
     private let storage: ITransactionStorage
+    private let rpcApiProvider: IRpcApiProvider
 
     // MARK: - Combine
 
@@ -27,9 +28,10 @@ final class TransactionManager {
 
     // MARK: - Init
 
-    init(address: String, storage: ITransactionStorage) {
+    init(address: String, storage: ITransactionStorage, rpcApiProvider: IRpcApiProvider) {
         self.address = address
         self.storage = storage
+        self.rpcApiProvider = rpcApiProvider
     }
 
     // MARK: - Private filter helpers
@@ -221,5 +223,233 @@ final class TransactionManager {
 
     func splTransactions(mintAddress: String, incoming: Bool?, fromHash: String?, limit: Int?) -> [FullTransaction] {
         storage.splTransactions(mintAddress: mintAddress, incoming: incoming, fromHash: fromHash, limit: limit)
+    }
+
+    // MARK: - Send SOL
+
+    /// Builds, signs, broadcasts, persists, and emits a pending SOL transfer.
+    ///
+    /// Steps mirror Android's `TransactionManager.sendSol()`:
+    /// 1. Fetch latest blockhash.
+    /// 2. Build ComputeBudget + SystemProgram.transfer instructions.
+    /// 3. Serialize message → sign → build wire transaction → base64-encode → broadcast.
+    /// 4. Persist as a pending `Transaction` and emit via `transactionsSubject`.
+    ///
+    /// - Parameters:
+    ///   - toAddress: Base58-encoded recipient Solana address.
+    ///   - amount: Amount in lamports to transfer.
+    ///   - signer: The `Signer` that holds the sender's Ed25519 keypair.
+    /// - Returns: The pending `FullTransaction` that was persisted.
+    /// - Throws: `SendError.invalidAddress` if either address is malformed,
+    ///   or any lower-level RPC / serialization error.
+    func sendSol(toAddress: String, amount: UInt64, signer: Signer) async throws -> FullTransaction {
+        let senderPublicKey = try senderKey()
+        guard let recipientPublicKey = try? PublicKey(toAddress) else {
+            throw SendError.invalidAddress(toAddress)
+        }
+
+        // 1. Fetch recent blockhash.
+        let blockhashResponse = try await rpcApiProvider.getLatestBlockhash()
+
+        // 2. Build instructions: priority fees + SOL transfer.
+        let instructions: [TransactionInstruction] = priorityFeeInstructions() + [
+            SystemProgram.transfer(from: senderPublicKey, to: recipientPublicKey, lamports: amount),
+        ]
+
+        // 3–6. Serialize, sign, build wire transaction, broadcast.
+        let (base64Tx, txHash) = try await serializeSignAndSend(
+            feePayer: senderPublicKey,
+            instructions: instructions,
+            recentBlockhash: blockhashResponse.blockhash,
+            signer: signer
+        )
+
+        // 7. Construct a pending Transaction record.
+        let transaction = Transaction(
+            hash: txHash,
+            timestamp: Int64(Date().timeIntervalSince1970),
+            fee: "\(Kit.fee)",
+            from: address,
+            to: toAddress,
+            amount: String(amount),
+            pending: true,
+            blockHash: blockhashResponse.blockhash,
+            lastValidBlockHeight: blockhashResponse.lastValidBlockHeight,
+            base64Encoded: base64Tx,
+            retryCount: 0
+        )
+
+        // 8. Persist and emit.
+        try? storage.save(transactions: [transaction])
+        let fullTx = FullTransaction(transaction: transaction, tokenTransfers: [])
+        DispatchQueue.main.async { [weak self] in
+            self?.transactionsSubject.send([fullTx])
+        }
+        return fullTx
+    }
+
+    // MARK: - Send SPL
+
+    /// Builds, signs, broadcasts, persists, and emits a pending SPL token transfer.
+    ///
+    /// Steps mirror Android's `TransactionManager.sendSpl()`:
+    /// 1. Look up sender's existing token account from local storage.
+    /// 2. Derive recipient's ATA address.
+    /// 3. Check whether recipient's ATA exists on-chain.
+    /// 4. Fetch latest blockhash.
+    /// 5. Build ComputeBudget + (optional CreateIdempotent) + TokenProgram.transfer instructions.
+    /// 6. Serialize message → sign → build wire transaction → base64-encode → broadcast.
+    /// 7. Persist pending Transaction + TokenTransfer records and emit.
+    ///
+    /// - Parameters:
+    ///   - mintAddress: The SPL token mint address.
+    ///   - toAddress: Base58-encoded recipient wallet address.
+    ///   - amount: Raw token amount (not UI-adjusted) to transfer.
+    ///   - signer: The `Signer` that holds the sender's Ed25519 keypair.
+    /// - Returns: The pending `FullTransaction` that was persisted.
+    /// - Throws: `SendError.tokenAccountNotFound` if the sender has no token account for the mint,
+    ///   `SendError.sameSourceAndDestination` if sender and recipient ATAs are identical,
+    ///   `SendError.invalidAddress` if the recipient address is malformed.
+    func sendSpl(mintAddress: String, toAddress: String, amount: UInt64, signer: Signer) async throws -> FullTransaction {
+        let senderPublicKey = try senderKey()
+
+        guard let recipientPublicKey = try? PublicKey(toAddress) else {
+            throw SendError.invalidAddress(toAddress)
+        }
+        guard let mintPublicKey = try? PublicKey(mintAddress) else {
+            throw SendError.invalidAddress(mintAddress)
+        }
+
+        // 1. Look up sender's existing token account from local storage.
+        guard let senderFullTokenAccount = storage.fullTokenAccount(mintAddress: mintAddress) else {
+            throw SendError.tokenAccountNotFound(mintAddress)
+        }
+        let senderATA = try PublicKey(senderFullTokenAccount.tokenAccount.address)
+
+        // 2. Derive recipient's ATA address.
+        let recipientATA = try AssociatedTokenAccountProgram.associatedTokenAddress(
+            wallet: recipientPublicKey,
+            mint: mintPublicKey
+        )
+
+        // Guard: sender and recipient ATAs must differ.
+        guard senderATA != recipientATA else {
+            throw SendError.sameSourceAndDestination
+        }
+
+        // 3. Check whether recipient's ATA exists on-chain.
+        let recipientATAAccounts = try await rpcApiProvider.getMultipleAccounts(addresses: [recipientATA.base58])
+        // `getMultipleAccounts` returns `[BufferInfo?]`; a non-nil inner element means the account exists.
+        let recipientATAExists = recipientATAAccounts.first.flatMap { $0 } != nil
+
+        // 4. Fetch recent blockhash.
+        let blockhashResponse = try await rpcApiProvider.getLatestBlockhash()
+
+        // 5. Build instructions.
+        var instructions: [TransactionInstruction] = priorityFeeInstructions()
+        if !recipientATAExists {
+            instructions.append(AssociatedTokenAccountProgram.createIdempotent(
+                payer: senderPublicKey,
+                associatedToken: recipientATA,
+                owner: recipientPublicKey,
+                mint: mintPublicKey
+            ))
+        }
+        instructions.append(TokenProgram.transfer(
+            source: senderATA,
+            destination: recipientATA,
+            authority: senderPublicKey,
+            amount: amount
+        ))
+
+        // 6. Serialize, sign, build wire transaction, broadcast.
+        let (base64Tx, txHash) = try await serializeSignAndSend(
+            feePayer: senderPublicKey,
+            instructions: instructions,
+            recentBlockhash: blockhashResponse.blockhash,
+            signer: signer
+        )
+
+        // 7. Construct pending Transaction + TokenTransfer records.
+        let transaction = Transaction(
+            hash: txHash,
+            timestamp: Int64(Date().timeIntervalSince1970),
+            fee: "\(Kit.fee)",
+            pending: true,
+            blockHash: blockhashResponse.blockhash,
+            lastValidBlockHeight: blockhashResponse.lastValidBlockHeight,
+            base64Encoded: base64Tx,
+            retryCount: 0
+        )
+        let tokenTransfer = TokenTransfer(
+            transactionHash: txHash,
+            mintAddress: mintAddress,
+            incoming: false,
+            amount: String(amount)
+        )
+
+        // 8. Persist transaction and token transfer, then emit.
+        try? storage.save(transactions: [transaction])
+        try? storage.save(tokenTransfers: [tokenTransfer])
+
+        // Assemble FullTokenTransfer for emission (use stored MintAccount if available).
+        let mintAccount = storage.mintAccount(address: mintAddress)
+            ?? MintAccount(address: mintAddress, decimals: senderFullTokenAccount.tokenAccount.decimals)
+        let fullTokenTransfer = FullTokenTransfer(tokenTransfer: tokenTransfer, mintAccount: mintAccount)
+        let fullTx = FullTransaction(transaction: transaction, tokenTransfers: [fullTokenTransfer])
+
+        DispatchQueue.main.async { [weak self] in
+            self?.transactionsSubject.send([fullTx])
+        }
+        return fullTx
+    }
+
+    // MARK: - Private helpers
+
+    /// Returns the two ComputeBudget priority fee instructions used in every send transaction.
+    ///
+    /// Hardcoded values match Android's `TransactionManager.priorityFeeInstructions()`:
+    /// - 300,000 compute unit limit
+    /// - 500,000 micro-lamports per compute unit
+    private func priorityFeeInstructions() -> [TransactionInstruction] {
+        [
+            ComputeBudgetProgram.setComputeUnitLimit(units: 300_000),
+            ComputeBudgetProgram.setComputeUnitPrice(microLamports: 500_000),
+        ]
+    }
+
+    /// Parses the sender's stored address into a `PublicKey`.
+    private func senderKey() throws -> PublicKey {
+        guard let key = try? PublicKey(address) else {
+            throw SendError.invalidAddress(address)
+        }
+        return key
+    }
+
+    /// Serializes the compiled message, signs it, builds the full wire transaction,
+    /// base64-encodes it, and broadcasts it via RPC.
+    ///
+    /// - Returns: A tuple of `(base64EncodedTransaction, txSignature)`.
+    private func serializeSignAndSend(
+        feePayer: PublicKey,
+        instructions: [TransactionInstruction],
+        recentBlockhash: String,
+        signer: Signer
+    ) async throws -> (base64Tx: String, txHash: String) {
+        let messageBytes = try SolanaSerializer.serializeMessage(
+            feePayer: feePayer,
+            instructions: instructions,
+            recentBlockhash: recentBlockhash
+        )
+        let signature = try signer.sign(data: messageBytes)
+        let txData = try SolanaSerializer.buildTransaction(
+            feePayer: feePayer,
+            instructions: instructions,
+            recentBlockhash: recentBlockhash,
+            signatures: [signature]
+        )
+        let base64Tx = txData.base64EncodedString()
+        let txHash = try await rpcApiProvider.sendTransaction(serializedBase64: base64Tx)
+        return (base64Tx, txHash)
     }
 }

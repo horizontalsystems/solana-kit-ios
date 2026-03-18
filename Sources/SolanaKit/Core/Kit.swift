@@ -181,6 +181,42 @@ public class Kit {
         transactionManager.splTransactions(mintAddress: mintAddress, incoming: incoming, fromHash: fromHash, limit: limit)
     }
 
+    // MARK: - Send
+
+    /// Builds, signs, broadcasts, and persists a pending SOL transfer.
+    ///
+    /// The caller constructs their own `Signer` instance (holding the private key) and passes
+    /// it in. `Kit` never owns or stores key material.
+    ///
+    /// - Parameters:
+    ///   - toAddress: Base58-encoded recipient Solana address.
+    ///   - amount: Transfer amount in lamports.
+    ///   - signer: An Ed25519 `Signer` for the sender's wallet.
+    /// - Returns: The pending `FullTransaction` that was broadcast and persisted.
+    /// - Throws: `SendError` for invalid addresses or failed broadcasts.
+    public func sendSol(toAddress: String, amount: UInt64, signer: Signer) async throws -> FullTransaction {
+        try await transactionManager.sendSol(toAddress: toAddress, amount: amount, signer: signer)
+    }
+
+    /// Builds, signs, broadcasts, and persists a pending SPL token transfer.
+    ///
+    /// If the recipient has no Associated Token Account for the given mint, a
+    /// `CreateIdempotent` instruction is prepended automatically (matching Android behaviour).
+    ///
+    /// The caller constructs their own `Signer` instance and passes it in.
+    ///
+    /// - Parameters:
+    ///   - mintAddress: The SPL token mint address.
+    ///   - toAddress: Base58-encoded recipient wallet address.
+    ///   - amount: Raw (non-UI-adjusted) token amount to transfer.
+    ///   - signer: An Ed25519 `Signer` for the sender's wallet.
+    /// - Returns: The pending `FullTransaction` that was broadcast and persisted.
+    /// - Throws: `SendError` for missing sender token accounts, same-address sends, or
+    ///   invalid addresses.
+    public func sendSpl(mintAddress: String, toAddress: String, amount: UInt64, signer: Signer) async throws -> FullTransaction {
+        try await transactionManager.sendSpl(mintAddress: mintAddress, toAddress: toAddress, amount: amount, signer: signer)
+    }
+
     // MARK: - Init
 
     private init(
@@ -272,7 +308,7 @@ public class Kit {
             mainStorage: mainStorage
         )
 
-        let transactionManager = TransactionManager(address: address, storage: transactionStorage)
+        let transactionManager = TransactionManager(address: address, storage: transactionStorage, rpcApiProvider: rpcApiProvider)
 
         let pendingTransactionSyncer = PendingTransactionSyncer(
             rpcApiProvider: rpcApiProvider,
@@ -430,4 +466,17 @@ extension Kit: ISyncManagerDelegate {
             self?.transactionsSubject.send(transactions)
         }
     }
+}
+
+// MARK: - SendError
+
+/// Errors thrown by `Kit.sendSol(_:)` / `Kit.sendSpl(_:)` and their underlying
+/// `TransactionManager` implementations.
+public enum SendError: Error {
+    /// The requested mint has no Associated Token Account in the sender's local storage.
+    case tokenAccountNotFound(String)
+    /// The derived sender and recipient ATAs are identical — sending to yourself.
+    case sameSourceAndDestination
+    /// One of the provided addresses could not be decoded as a valid Solana public key.
+    case invalidAddress(String)
 }
