@@ -87,6 +87,49 @@ protocol IMainStorage {
     func setInitialSynced() throws
 }
 
+// MARK: - ApiSyncer state & delegate
+
+/// Internal readiness state of the `ApiSyncer` (the API-layer timer loop).
+///
+/// Separate from the public `SyncState` — `SyncerState` reflects whether the poller
+/// itself can run, not the progress of any individual data-fetch subsystem.
+/// Mirrors EvmKit's `SyncerState` (see `ApiProtocols.swift`) and Android's
+/// `ApiSyncer.SyncerState` sealed class.
+enum SyncerState {
+    /// Awaiting the first reachability signal before starting the timer.
+    case preparing
+    /// Network is reachable; the polling timer is running.
+    case ready
+    /// Polling is not possible — e.g. no network connection or kit not started.
+    case notReady(error: Error)
+}
+
+extension SyncerState: Equatable {
+    static func == (lhs: SyncerState, rhs: SyncerState) -> Bool {
+        switch (lhs, rhs) {
+        case (.preparing, .preparing): return true
+        case (.ready, .ready): return true
+        case let (.notReady(lhsError), .notReady(rhsError)):
+            return "\(lhsError)" == "\(rhsError)"
+        default: return false
+        }
+    }
+}
+
+/// Delegate notified by `ApiSyncer` on state transitions and new block heights.
+///
+/// Implemented by `SyncManager` (milestone 3.1) which fans out sync work to
+/// `BalanceManager`, `TokenAccountManager`, and `TransactionSyncer`.
+protocol IApiSyncerDelegate: AnyObject {
+    /// Called when the syncer's readiness state changes (on distinct transitions only).
+    func didUpdateSyncerState(_ state: SyncerState)
+
+    /// Called on every poll tick with the latest block height (slot).
+    /// Fires even when the value is unchanged — this is the heartbeat that drives
+    /// downstream sync subsystems.
+    func didUpdateLastBlockHeight(_ lastBlockHeight: Int64)
+}
+
 // MARK: - IRpcApiProvider typed convenience API
 
 /// Default implementations wrapping `fetch(rpc:)` with typed `JsonRpc` subclasses.

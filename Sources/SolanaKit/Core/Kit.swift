@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import HsToolKit
 
 /// Public facade for SolanaKit.
 ///
@@ -12,8 +13,8 @@ public class Kit {
     // MARK: - Subsystems (wired in Kit.instance())
 
     private let connectionManager: ConnectionManager
+    private let apiSyncer: ApiSyncer
 
-    // TODO: [milestone 2.4] let apiSyncer: ApiSyncer
     // TODO: [milestone 3.1] let syncManager: SyncManager
     // TODO: [milestone 3.1] let balanceManager: BalanceManager
     // TODO: [milestone 3.1] let tokenAccountManager: TokenAccountManager
@@ -21,8 +22,9 @@ public class Kit {
 
     // MARK: - Init
 
-    private init(connectionManager: ConnectionManager) {
+    private init(connectionManager: ConnectionManager, apiSyncer: ApiSyncer) {
         self.connectionManager = connectionManager
+        self.apiSyncer = apiSyncer
     }
 
     // MARK: - Factory
@@ -36,14 +38,29 @@ public class Kit {
     public static func instance(address: String, rpcSource: RpcSource, walletId: String) throws -> Kit {
         let connectionManager = ConnectionManager()
 
-        // TODO: [milestone 2.4]
-        // let apiSyncer = ApiSyncer(rpcApiProvider: rpcApiProvider,
-        //                            connectionManager: connectionManager,
-        //                            syncInterval: 30)
+        let mainStorage = try MainStorage(walletId: walletId)
+
+        let networkManager = NetworkManager(logger: nil)
+        let rpcApiProvider = RpcApiProvider(
+            networkManager: networkManager,
+            url: rpcSource.url,
+            auth: nil
+        )
+
+        let apiSyncer = ApiSyncer(
+            rpcApiProvider: rpcApiProvider,
+            connectionManager: connectionManager,
+            storage: mainStorage,
+            syncInterval: rpcSource.syncInterval
+        )
+
+        // TODO: [milestone 3.1] Set apiSyncer.delegate = syncManager once SyncManager is wired.
+        // Until then the timer runs and persists block height to storage,
+        // but no downstream sync is triggered.
 
         // TODO: [milestone 3.1] Wire remaining subsystems here.
 
-        return Kit(connectionManager: connectionManager)
+        return Kit(connectionManager: connectionManager, apiSyncer: apiSyncer)
     }
 
     // MARK: - Lifecycle
@@ -51,11 +68,13 @@ public class Kit {
     /// Starts all subsystems (network monitoring, sync timers, etc.).
     public func start() {
         connectionManager.start()
+        apiSyncer.start()
         // TODO: [milestone 3.1] syncManager.start()
     }
 
     /// Stops all subsystems cleanly.
     public func stop() {
+        apiSyncer.stop()
         connectionManager.stop()
         // TODO: [milestone 3.1] syncManager.stop()
     }
@@ -63,5 +82,15 @@ public class Kit {
     /// Triggers an immediate sync cycle regardless of the timer interval.
     public func refresh() {
         // TODO: [milestone 3.1] syncManager.refresh()
+    }
+
+    /// Temporarily suspends polling without tearing down the connection monitor.
+    public func pause() {
+        apiSyncer.pause()
+    }
+
+    /// Resumes polling after a `pause()` call.
+    public func resume() {
+        apiSyncer.resume()
     }
 }
