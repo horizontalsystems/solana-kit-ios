@@ -33,10 +33,10 @@ public class TokenAccount: Record {
 
     // MARK: - Record
 
-    override class var databaseTableName: String { "tokenAccounts" }
+    public override class var databaseTableName: String { "tokenAccounts" }
 
     /// Upsert: mirrors Android's `OnConflictStrategy.REPLACE`.
-    override class var persistenceConflictPolicy: PersistenceConflictPolicy {
+    public override class var persistenceConflictPolicy: PersistenceConflictPolicy {
         PersistenceConflictPolicy(insert: .replace, update: .replace)
     }
 
@@ -47,7 +47,7 @@ public class TokenAccount: Record {
         case decimals
     }
 
-    required init(row: Row) throws {
+    public required init(row: Row) throws {
         address = row[Columns.address]
         mintAddress = row[Columns.mintAddress]
         balance = row[Columns.balance]
@@ -55,7 +55,7 @@ public class TokenAccount: Record {
         try super.init(row: row)
     }
 
-    override func encode(to container: inout PersistenceContainer) throws {
+    public override func encode(to container: inout PersistenceContainer) throws {
         container[Columns.address] = address
         container[Columns.mintAddress] = mintAddress
         container[Columns.balance] = balance

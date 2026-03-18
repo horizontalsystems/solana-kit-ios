@@ -49,10 +49,10 @@ public class MintAccount: Record {
 
     // MARK: - Record
 
-    override class var databaseTableName: String { "mintAccounts" }
+    public override class var databaseTableName: String { "mintAccounts" }
 
     /// First-write-wins: mirrors Android's `OnConflictStrategy.IGNORE`.
-    override class var persistenceConflictPolicy: PersistenceConflictPolicy {
+    public override class var persistenceConflictPolicy: PersistenceConflictPolicy {
         PersistenceConflictPolicy(insert: .ignore, update: .ignore)
     }
 
@@ -67,7 +67,7 @@ public class MintAccount: Record {
         case collectionAddress
     }
 
-    required init(row: Row) throws {
+    public required init(row: Row) throws {
         address = row[Columns.address]
         decimals = row[Columns.decimals]
         supply = row[Columns.supply]
@@ -79,7 +79,7 @@ public class MintAccount: Record {
         try super.init(row: row)
     }
 
-    override func encode(to container: inout PersistenceContainer) throws {
+    public override func encode(to container: inout PersistenceContainer) throws {
         container[Columns.address] = address
         container[Columns.decimals] = decimals
         container[Columns.supply] = supply

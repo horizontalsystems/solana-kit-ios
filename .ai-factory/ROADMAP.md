@@ -20,7 +20,7 @@ This project is part of a multi-repo workspace. The planner works inside `solana
 - [x] **1.2 Base58 & Solana Primitives** — Base58 encoder/decoder, compact-u16 encoding (Solana's variable-length integer format), `PublicKey` type (32-byte wrapper with Base58 string representation). These are used everywhere: models, RPC, transaction serialization
 - [x] **1.3 Core Models** — `Address` (wraps PublicKey), `SyncState` (enum with associated values), `RpcSource` (endpoint + network), `BalanceEntity`, `LastBlockHeightEntity`, `InitialSyncEntity` — foundational types used everywhere
 - [x] **1.4 Token & Transaction Models** — `TokenAccount`, `MintAccount`, `FullTokenAccount`, `Transaction`, `FullTransaction`, `TokenTransfer`, `LastSyncedTransaction` — data layer types for storage and API surface
-- [ ] **1.5 MainStorage (GRDB)** — First database: schema + migrations for balance, last block height, initial sync flag. DAO methods for read/write. Follows EvmKit.Swift GRDB patterns
+- [x] **1.5 MainStorage (GRDB)** — First database: schema + migrations for balance, last block height, initial sync flag. DAO methods for read/write. Follows EvmKit.Swift GRDB patterns
 - [ ] **1.6 TransactionStorage (GRDB)** — Second database: schema + migrations for transactions, token accounts, mint accounts, syncer state. Complex queries with optional filters (incoming, mint address), pagination (fromHash, limit)
 
 ### Phase 2: Network & Sync Infrastructure

@@ -47,10 +47,10 @@ public class TokenTransfer: Record {
 
     // MARK: - Record
 
-    override class var databaseTableName: String { "tokenTransfers" }
+    public override class var databaseTableName: String { "tokenTransfers" }
 
     /// First-write-wins: mirrors Android's `OnConflictStrategy.IGNORE`.
-    override class var persistenceConflictPolicy: PersistenceConflictPolicy {
+    public override class var persistenceConflictPolicy: PersistenceConflictPolicy {
         PersistenceConflictPolicy(insert: .ignore, update: .ignore)
     }
 
@@ -62,7 +62,7 @@ public class TokenTransfer: Record {
         case amount
     }
 
-    required init(row: Row) throws {
+    public required init(row: Row) throws {
         id = row[Columns.id]
         transactionHash = row[Columns.transactionHash]
         mintAddress = row[Columns.mintAddress]
@@ -71,7 +71,7 @@ public class TokenTransfer: Record {
         try super.init(row: row)
     }
 
-    override func encode(to container: inout PersistenceContainer) throws {
+    public override func encode(to container: inout PersistenceContainer) throws {
         container[Columns.id] = id
         container[Columns.transactionHash] = transactionHash
         container[Columns.mintAddress] = mintAddress
@@ -80,7 +80,7 @@ public class TokenTransfer: Record {
     }
 
     /// Captures the auto-assigned rowid after insert.
-    override func didInsert(_ inserted: InsertionSuccess) {
+    public override func didInsert(_ inserted: InsertionSuccess) {
         super.didInsert(inserted)
         id = inserted.rowID
     }

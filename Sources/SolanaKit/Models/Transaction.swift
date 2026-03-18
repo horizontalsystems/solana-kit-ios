@@ -75,10 +75,10 @@ public class Transaction: Record {
 
     // MARK: - Record
 
-    override class var databaseTableName: String { "transactions" }
+    public override class var databaseTableName: String { "transactions" }
 
     /// Upsert: mirrors Android's `OnConflictStrategy.REPLACE`.
-    override class var persistenceConflictPolicy: PersistenceConflictPolicy {
+    public override class var persistenceConflictPolicy: PersistenceConflictPolicy {
         PersistenceConflictPolicy(insert: .replace, update: .replace)
     }
 
@@ -97,7 +97,7 @@ public class Transaction: Record {
         case retryCount
     }
 
-    required init(row: Row) throws {
+    public required init(row: Row) throws {
         hash = row[Columns.hash]
         timestamp = row[Columns.timestamp]
         fee = row[Columns.fee]
@@ -113,7 +113,7 @@ public class Transaction: Record {
         try super.init(row: row)
     }
 
-    override func encode(to container: inout PersistenceContainer) throws {
+    public override func encode(to container: inout PersistenceContainer) throws {
         container[Columns.hash] = hash
         container[Columns.timestamp] = timestamp
         container[Columns.fee] = fee
