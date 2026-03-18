@@ -15,6 +15,10 @@ final class ConnectionManager {
     private let monitorQueue = DispatchQueue(label: "io.horizontalsystems.solana-kit.connection-manager")
 
     @DistinctPublished private(set) var isConnected: Bool = false
+
+    deinit {
+        monitor.cancel()
+    }
 }
 
 // MARK: - IConnectionManager
@@ -25,7 +29,9 @@ extension ConnectionManager: IConnectionManager {
     }
 
     func start() {
-        // NWPathMonitor cannot be restarted after cancel — create a fresh instance each time.
+        // Cancel the previous monitor if still running (NWPathMonitor retains itself once started).
+        monitor.cancel()
+
         monitor = NWPathMonitor()
 
         monitor.pathUpdateHandler = { [weak self] path in
