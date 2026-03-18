@@ -47,6 +47,7 @@ enum SolanaSerializer {
         case invalidBlockhash(String)
         case invalidSignatureLength(Int)
         case accountIndexOutOfBounds(PublicKey)
+        case invalidTransactionData(String)
     }
 
     // MARK: - Compile
@@ -250,6 +251,139 @@ enum SolanaSerializer {
         result.append(contentsOf: serialize(message: message))
 
         return result
+    }
+
+    // MARK: - Transaction deserialization
+
+    /// Deserializes a wire-format Solana transaction back into its constituent signatures and compiled message.
+    ///
+    /// Handles two formats:
+    /// - **Legacy** (no version prefix): compact-u16 sig count → signatures → message bytes
+    /// - **Versioned v0** (prefix byte `0x80`): same structure, but the message begins with a
+    ///   version byte (`0x80`) before the 3-byte header. Any address lookup table data appended
+    ///   after the instructions is silently skipped (not needed for fee estimation).
+    ///
+    /// Detection: after the signatures, if the next byte is `< 0x80` it is the legacy message
+    /// `numRequiredSignatures` field. If `>= 0x80` it is a version prefix — consumed and discarded.
+    ///
+    /// - Parameter transactionData: Raw transaction wire bytes (NOT base64-encoded).
+    /// - Returns: A tuple of the parsed signatures and the reconstructed `CompiledMessage`.
+    /// - Throws: `SerializerError.invalidTransactionData` on malformed input.
+    static func deserialize(transactionData: Data) throws -> (signatures: [Data], message: CompiledMessage) {
+        var cursor = transactionData.startIndex
+
+        // Helper: copy `count` bytes into a fresh Data value and advance cursor.
+        func read(_ count: Int) throws -> Data {
+            let end = cursor + count
+            guard end <= transactionData.endIndex else {
+                throw SerializerError.invalidTransactionData(
+                    "Unexpected end of data at offset \(cursor - transactionData.startIndex), needed \(count) bytes"
+                )
+            }
+            let slice = Data(transactionData[cursor..<end])
+            cursor = end
+            return slice
+        }
+
+        // Helper: decode a compact-u16 value and advance cursor.
+        func readCompactU16() throws -> Int {
+            guard cursor < transactionData.endIndex else {
+                throw SerializerError.invalidTransactionData(
+                    "Unexpected end of data reading compact-u16 at offset \(cursor - transactionData.startIndex)"
+                )
+            }
+            let (value, bytesRead) = CompactU16.decode(transactionData[cursor...])
+            guard bytesRead > 0 else {
+                throw SerializerError.invalidTransactionData(
+                    "Failed to decode compact-u16 at offset \(cursor - transactionData.startIndex)"
+                )
+            }
+            cursor += bytesRead
+            return value
+        }
+
+        // ── 1. Signature count (compact-u16) ──────────────────────────────────
+        let sigCount = try readCompactU16()
+
+        // ── 2. Signatures (64 bytes each) ─────────────────────────────────────
+        var signatures = [Data]()
+        signatures.reserveCapacity(sigCount)
+        for _ in 0..<sigCount {
+            signatures.append(try read(64))
+        }
+
+        // ── 3. Detect message version ──────────────────────────────────────────
+        // After the signatures the next byte is either:
+        //   • numRequiredSignatures (< 0x80) → legacy message; do NOT consume it.
+        //   • A version prefix (>= 0x80)     → versioned message; consume and discard.
+        guard cursor < transactionData.endIndex else {
+            throw SerializerError.invalidTransactionData("No message data after signatures")
+        }
+        if transactionData[cursor] >= 0x80 {
+            cursor += 1  // skip version byte
+        }
+
+        // ── 4. Message header (3 bytes) ────────────────────────────────────────
+        let headerData = try read(3)
+        let header = MessageHeader(
+            numRequiredSignatures:       headerData[headerData.startIndex],
+            numReadonlySignedAccounts:   headerData[headerData.startIndex + 1],
+            numReadonlyUnsignedAccounts: headerData[headerData.startIndex + 2]
+        )
+
+        // ── 5. Account keys ────────────────────────────────────────────────────
+        let keyCount = try readCompactU16()
+        var accountKeys = [PublicKey]()
+        accountKeys.reserveCapacity(keyCount)
+        for _ in 0..<keyCount {
+            let keyData = try read(32)
+            do {
+                accountKeys.append(try PublicKey(data: keyData))
+            } catch {
+                throw SerializerError.invalidTransactionData(
+                    "Invalid public key at offset \(cursor - transactionData.startIndex - 32)"
+                )
+            }
+        }
+
+        // ── 6. Recent blockhash (32 bytes) ────────────────────────────────────
+        let recentBlockhash = try read(32)
+
+        // ── 7. Instructions ───────────────────────────────────────────────────
+        let ixCount = try readCompactU16()
+        var instructions = [CompiledInstruction]()
+        instructions.reserveCapacity(ixCount)
+        for _ in 0..<ixCount {
+            // Program ID index (1 byte).
+            let programIdIndex = try read(1)[0]
+
+            // Account indices.
+            let acctCount = try readCompactU16()
+            let acctData  = try read(acctCount)
+            let accountIndices = [UInt8](acctData)
+
+            // Instruction data.
+            let dataLen = try readCompactU16()
+            let ixData  = try read(dataLen)
+
+            instructions.append(CompiledInstruction(
+                programIdIndex: programIdIndex,
+                accountIndices: accountIndices,
+                data: ixData
+            ))
+        }
+
+        // For versioned v0 transactions additional address lookup table entries may follow.
+        // They are not needed for fee estimation so we silently skip them.
+
+        let compiledMessage = CompiledMessage(
+            header: header,
+            accountKeys: accountKeys,
+            recentBlockhash: recentBlockhash,
+            instructions: instructions
+        )
+
+        return (signatures: signatures, message: compiledMessage)
     }
 
     // MARK: - Convenience methods

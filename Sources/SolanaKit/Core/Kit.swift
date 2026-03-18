@@ -380,6 +380,47 @@ public class Kit {
         return kit
     }
 
+    // MARK: - Fee estimation
+
+    /// Estimates the total transaction fee (in SOL) for a raw serialized transaction.
+    ///
+    /// Parses the wire-format transaction bytes to extract any `SetComputeUnitLimit` and
+    /// `SetComputeUnitPrice` Compute Budget instructions, then calculates:
+    /// ```
+    /// fee = baseFee + (computeUnitPrice × computeUnitLimit ÷ 1_000_000) [in lamports]
+    /// feeSol = fee ÷ 1_000_000_000
+    /// ```
+    ///
+    /// This is a **static** method — no `Kit` instance required. Callers (e.g. Jupiter swap adapters)
+    /// may call it before the kit is instantiated or independently of a wallet session.
+    ///
+    /// Mirrors Android's `SolanaKit.estimateFee(hexEncoded: ByteArray)` / `BaseSolanaAdapter`.
+    ///
+    /// - Parameter rawTransaction: Raw transaction wire bytes (NOT base64-encoded).
+    /// - Returns: Estimated fee in SOL as a `Decimal`.
+    /// - Throws: `SolanaSerializer.SerializerError.invalidTransactionData` on malformed input.
+    public static func estimateFee(rawTransaction: Data) throws -> Decimal {
+        let (_, message) = try SolanaSerializer.deserialize(transactionData: rawTransaction)
+        return ComputeBudgetProgram.calculateFee(from: message, baseFeeLamports: baseFeeLamports)
+    }
+
+    /// Convenience overload that accepts a base64-encoded transaction string.
+    ///
+    /// Decodes the string then delegates to `estimateFee(rawTransaction:)`.
+    ///
+    /// - Parameter base64EncodedTransaction: A base64-encoded Solana transaction.
+    /// - Returns: Estimated fee in SOL as a `Decimal`.
+    /// - Throws: `SolanaSerializer.SerializerError.invalidTransactionData` on malformed input or
+    ///   invalid base64.
+    public static func estimateFee(base64EncodedTransaction: String) throws -> Decimal {
+        guard let rawData = Data(base64Encoded: base64EncodedTransaction) else {
+            throw SolanaSerializer.SerializerError.invalidTransactionData(
+                "Invalid base64 encoding"
+            )
+        }
+        return try estimateFee(rawTransaction: rawData)
+    }
+
     // MARK: - Static cleanup
 
     /// Deletes all persisted data (both GRDB databases) for the given wallet identifier.
