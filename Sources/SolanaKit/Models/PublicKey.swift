@@ -6,14 +6,14 @@ import GRDB
 /// The canonical string representation is Base58.
 /// `Codable` encodes/decodes as a Base58 string, matching the Solana JSON-RPC format.
 /// `DatabaseValueConvertible` stores the raw 32 bytes as a GRDB blob.
-struct PublicKey {
+public struct PublicKey {
     /// The raw 32-byte public key.
-    let data: Data
+    public let data: Data
 
     // MARK: - Initializers
 
     /// Creates a `PublicKey` from raw bytes. Throws if `data.count != 32`.
-    init(data: Data) throws {
+    public init(data: Data) throws {
         guard data.count == 32 else {
             throw Error.invalidPublicKeyLength
         }
@@ -21,7 +21,7 @@ struct PublicKey {
     }
 
     /// Creates a `PublicKey` by decoding a Base58 string. Throws on invalid Base58 or wrong length.
-    init(_ base58String: String) throws {
+    public init(_ base58String: String) throws {
         do {
             let decoded = try Base58.decode(base58String)
             try self.init(data: decoded)
@@ -33,12 +33,12 @@ struct PublicKey {
     // MARK: - Properties
 
     /// The Base58-encoded string representation of this public key.
-    var base58: String {
+    public var base58: String {
         Base58.encode(data)
     }
 
     /// The raw bytes of this public key (alias for `data`).
-    var bytes: Data {
+    public var bytes: Data {
         data
     }
 }
@@ -58,7 +58,7 @@ extension PublicKey {
 // MARK: - Error
 
 extension PublicKey {
-    enum Error: Swift.Error {
+    public enum Error: Swift.Error {
         case invalidPublicKeyLength
         case invalidBase58String
     }
@@ -67,13 +67,13 @@ extension PublicKey {
 // MARK: - Equatable & Hashable
 
 extension PublicKey: Equatable {
-    static func == (lhs: PublicKey, rhs: PublicKey) -> Bool {
+    public static func == (lhs: PublicKey, rhs: PublicKey) -> Bool {
         lhs.data == rhs.data
     }
 }
 
 extension PublicKey: Hashable {
-    func hash(into hasher: inout Hasher) {
+    public func hash(into hasher: inout Hasher) {
         hasher.combine(data)
     }
 }
@@ -81,7 +81,7 @@ extension PublicKey: Hashable {
 // MARK: - CustomStringConvertible
 
 extension PublicKey: CustomStringConvertible {
-    var description: String {
+    public var description: String {
         base58
     }
 }
@@ -89,11 +89,11 @@ extension PublicKey: CustomStringConvertible {
 // MARK: - DatabaseValueConvertible (GRDB)
 
 extension PublicKey: DatabaseValueConvertible {
-    var databaseValue: DatabaseValue {
+    public var databaseValue: DatabaseValue {
         data.databaseValue
     }
 
-    static func fromDatabaseValue(_ dbValue: DatabaseValue) -> PublicKey? {
+    public static func fromDatabaseValue(_ dbValue: DatabaseValue) -> PublicKey? {
         switch dbValue.storage {
         case let .blob(data):
             return try? PublicKey(data: data)
@@ -106,7 +106,7 @@ extension PublicKey: DatabaseValueConvertible {
 // MARK: - Codable
 
 extension PublicKey: Codable {
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         let string = try container.decode(String.self)
         do {
@@ -119,7 +119,7 @@ extension PublicKey: Codable {
         }
     }
 
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
         try container.encode(base58)
     }

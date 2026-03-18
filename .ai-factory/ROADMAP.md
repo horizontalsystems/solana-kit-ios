@@ -18,7 +18,7 @@ This project is part of a multi-repo workspace. The planner works inside `solana
 
 - [x] **1.1 SPM Package Scaffold** — Create `solana-kit-ios/` with `Package.swift`, directory structure (`Sources/SolanaKit/{Core,Models,Database,Network,NodeRpc,Transactions}/`), and SPM dependencies: GRDB, HdWalletKit.Swift, TweetNaCl (Ed25519 signing, already used in unstoppable-wallet-ios for TON), HsToolKit.Swift
 - [x] **1.2 Base58 & Solana Primitives** — Base58 encoder/decoder, compact-u16 encoding (Solana's variable-length integer format), `PublicKey` type (32-byte wrapper with Base58 string representation). These are used everywhere: models, RPC, transaction serialization
-- [ ] **1.3 Core Models** — `Address` (wraps PublicKey), `SyncState` (enum with associated values), `RpcSource` (endpoint + network), `BalanceEntity`, `LastBlockHeightEntity`, `InitialSyncEntity` — foundational types used everywhere
+- [x] **1.3 Core Models** — `Address` (wraps PublicKey), `SyncState` (enum with associated values), `RpcSource` (endpoint + network), `BalanceEntity`, `LastBlockHeightEntity`, `InitialSyncEntity` — foundational types used everywhere
 - [ ] **1.4 Token & Transaction Models** — `TokenAccount`, `MintAccount`, `FullTokenAccount`, `Transaction`, `FullTransaction`, `TokenTransfer`, `LastSyncedTransaction` — data layer types for storage and API surface
 - [ ] **1.5 MainStorage (GRDB)** — First database: schema + migrations for balance, last block height, initial sync flag. DAO methods for read/write. Follows EvmKit.Swift GRDB patterns
 - [ ] **1.6 TransactionStorage (GRDB)** — Second database: schema + migrations for transactions, token accounts, mint accounts, syncer state. Complex queries with optional filters (incoming, mint address), pagination (fromHash, limit)
