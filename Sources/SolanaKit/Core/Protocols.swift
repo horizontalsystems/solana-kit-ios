@@ -115,6 +115,17 @@ protocol ITokenAccountManagerDelegate: AnyObject {
     func didUpdate(tokenBalanceSyncState: SyncState)
 }
 
+// MARK: - TransactionSyncer delegate
+
+/// Receives transaction sync-state updates from `TransactionSyncer`.
+///
+/// Implemented by `SyncManager`, which fans them out to `Kit` (via `ISyncManagerDelegate`).
+/// Mirrors Android `ITransactionListener` (TransactionSyncer.kt line 42).
+protocol ITransactionSyncerDelegate: AnyObject {
+    /// Called when the transaction sync state transitions to a new distinct value.
+    func didUpdate(transactionsSyncState: SyncState)
+}
+
 // MARK: - SyncManager delegate
 
 /// Receives aggregated sync events from `SyncManager` and forwards them to `Kit`.
@@ -136,6 +147,12 @@ protocol ISyncManagerDelegate: AnyObject {
 
     /// Called when the token balance sync state transitions to a new distinct value.
     func didUpdate(tokenBalanceSyncState: SyncState)
+
+    /// Called when the transaction sync state transitions to a new distinct value.
+    func didUpdate(transactionsSyncState: SyncState)
+
+    /// Called when a new batch of transactions has been synced.
+    func didUpdate(transactions: [FullTransaction])
 }
 
 // MARK: - ApiSyncer state & delegate

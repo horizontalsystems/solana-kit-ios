@@ -16,9 +16,11 @@ public class Kit {
     private let apiSyncer: ApiSyncer
     private let balanceManager: BalanceManager
     private let tokenAccountManager: TokenAccountManager
+    private let transactionManager: TransactionManager
+    private let transactionSyncer: TransactionSyncer
     private let syncManager: SyncManager
 
-    // MARK: - Services (for future consumption by TransactionSyncer in milestone 3.4)
+    // MARK: - Services
 
     private let jupiterApiService: JupiterApiService
 
@@ -29,6 +31,8 @@ public class Kit {
     private let lastBlockHeightSubject: CurrentValueSubject<Int64, Never>
     private let tokenBalanceSyncStateSubject: CurrentValueSubject<SyncState, Never>
     private let fungibleTokenAccountsSubject: CurrentValueSubject<[FullTokenAccount], Never>
+    private let transactionsSyncStateSubject: CurrentValueSubject<SyncState, Never>
+    private let transactionsSubject: PassthroughSubject<[FullTransaction], Never>
 
     // MARK: - Public Combine publishers
 
@@ -57,6 +61,16 @@ public class Kit {
         fungibleTokenAccountsSubject.eraseToAnyPublisher()
     }
 
+    /// Emits the current transaction sync state whenever it transitions.
+    public var transactionsSyncStatePublisher: AnyPublisher<SyncState, Never> {
+        transactionsSyncStateSubject.eraseToAnyPublisher()
+    }
+
+    /// Emits newly synced transaction batches.
+    public var transactionsPublisher: AnyPublisher<[FullTransaction], Never> {
+        transactionsSubject.eraseToAnyPublisher()
+    }
+
     // MARK: - Public synchronous accessors
 
     /// The last known SOL balance (in SOL). Returns the subject's current value.
@@ -79,6 +93,11 @@ public class Kit {
         tokenBalanceSyncStateSubject.value
     }
 
+    /// The current transaction sync state. Returns the subject's current value.
+    public var transactionsSyncState: SyncState {
+        transactionsSyncStateSubject.value
+    }
+
     /// Returns the current list of fungible SPL token accounts.
     public func fungibleTokenAccounts() -> [FullTokenAccount] {
         fungibleTokenAccountsSubject.value
@@ -89,6 +108,23 @@ public class Kit {
         tokenAccountManager.fullTokenAccount(mintAddress: mintAddress)
     }
 
+    // MARK: - Transaction query methods
+
+    /// Returns all transactions, optionally filtered by direction, paginated from `fromHash`.
+    public func transactions(incoming: Bool? = nil, fromHash: String? = nil, limit: Int? = nil) -> [FullTransaction] {
+        transactionManager.transactions(incoming: incoming, fromHash: fromHash, limit: limit)
+    }
+
+    /// Returns SOL-only transactions, optionally filtered by direction, paginated from `fromHash`.
+    public func solTransactions(incoming: Bool? = nil, fromHash: String? = nil, limit: Int? = nil) -> [FullTransaction] {
+        transactionManager.solTransactions(incoming: incoming, fromHash: fromHash, limit: limit)
+    }
+
+    /// Returns SPL token transactions for the given mint, optionally filtered by direction.
+    public func splTransactions(mintAddress: String, incoming: Bool? = nil, fromHash: String? = nil, limit: Int? = nil) -> [FullTransaction] {
+        transactionManager.splTransactions(mintAddress: mintAddress, incoming: incoming, fromHash: fromHash, limit: limit)
+    }
+
     // MARK: - Init
 
     private init(
@@ -96,18 +132,24 @@ public class Kit {
         apiSyncer: ApiSyncer,
         balanceManager: BalanceManager,
         tokenAccountManager: TokenAccountManager,
+        transactionManager: TransactionManager,
+        transactionSyncer: TransactionSyncer,
         syncManager: SyncManager,
         jupiterApiService: JupiterApiService,
         balanceSubject: CurrentValueSubject<Decimal, Never>,
         syncStateSubject: CurrentValueSubject<SyncState, Never>,
         lastBlockHeightSubject: CurrentValueSubject<Int64, Never>,
         tokenBalanceSyncStateSubject: CurrentValueSubject<SyncState, Never>,
-        fungibleTokenAccountsSubject: CurrentValueSubject<[FullTokenAccount], Never>
+        fungibleTokenAccountsSubject: CurrentValueSubject<[FullTokenAccount], Never>,
+        transactionsSyncStateSubject: CurrentValueSubject<SyncState, Never>,
+        transactionsSubject: PassthroughSubject<[FullTransaction], Never>
     ) {
         self.connectionManager = connectionManager
         self.apiSyncer = apiSyncer
         self.balanceManager = balanceManager
         self.tokenAccountManager = tokenAccountManager
+        self.transactionManager = transactionManager
+        self.transactionSyncer = transactionSyncer
         self.syncManager = syncManager
         self.jupiterApiService = jupiterApiService
         self.balanceSubject = balanceSubject
@@ -115,6 +157,8 @@ public class Kit {
         self.lastBlockHeightSubject = lastBlockHeightSubject
         self.tokenBalanceSyncStateSubject = tokenBalanceSyncStateSubject
         self.fungibleTokenAccountsSubject = fungibleTokenAccountsSubject
+        self.transactionsSyncStateSubject = transactionsSyncStateSubject
+        self.transactionsSubject = transactionsSubject
     }
 
     // MARK: - Factory
@@ -166,12 +210,25 @@ public class Kit {
             mainStorage: mainStorage
         )
 
+        let transactionManager = TransactionManager(storage: transactionStorage)
+
+        let transactionSyncer = TransactionSyncer(
+            address: address,
+            rpcApiProvider: rpcApiProvider,
+            nftClient: nftClient,
+            storage: transactionStorage,
+            transactionManager: transactionManager,
+            tokenAccountManager: tokenAccountManager
+        )
+
         // Initialise subjects with persisted values so consumers see correct state
         // immediately after Kit.instance() returns, before any RPC response arrives.
         let balanceSubject = CurrentValueSubject<Decimal, Never>(balanceManager.balance ?? 0)
         let syncStateSubject = CurrentValueSubject<SyncState, Never>(.notSynced(error: SyncError.notStarted))
         let lastBlockHeightSubject = CurrentValueSubject<Int64, Never>(apiSyncer.lastBlockHeight ?? 0)
         let tokenBalanceSyncStateSubject = CurrentValueSubject<SyncState, Never>(.notSynced(error: SyncError.notStarted))
+        let transactionsSyncStateSubject = CurrentValueSubject<SyncState, Never>(.notSynced(error: SyncError.notStarted))
+        let transactionsSubject = PassthroughSubject<[FullTransaction], Never>()
 
         // Seed fungible token accounts from storage so the value is available immediately.
         let initialFungibleAccounts = tokenAccountManager.tokenAccounts().filter { !$0.mintAccount.isNft }
@@ -187,19 +244,28 @@ public class Kit {
         apiSyncer.delegate = syncManager
         balanceManager.delegate = syncManager
         tokenAccountManager.delegate = syncManager
+        transactionSyncer.delegate = syncManager
+
+        // Inject transaction subsystems into SyncManager (post-init injection).
+        syncManager.transactionSyncer = transactionSyncer
+        syncManager.transactionManager = transactionManager
 
         let kit = Kit(
             connectionManager: connectionManager,
             apiSyncer: apiSyncer,
             balanceManager: balanceManager,
             tokenAccountManager: tokenAccountManager,
+            transactionManager: transactionManager,
+            transactionSyncer: transactionSyncer,
             syncManager: syncManager,
             jupiterApiService: jupiterApiService,
             balanceSubject: balanceSubject,
             syncStateSubject: syncStateSubject,
             lastBlockHeightSubject: lastBlockHeightSubject,
             tokenBalanceSyncStateSubject: tokenBalanceSyncStateSubject,
-            fungibleTokenAccountsSubject: fungibleTokenAccountsSubject
+            fungibleTokenAccountsSubject: fungibleTokenAccountsSubject,
+            transactionsSyncStateSubject: transactionsSyncStateSubject,
+            transactionsSubject: transactionsSubject
         )
 
         // Post-init: wire SyncManager → Kit (circular reference avoided via weak delegate)
@@ -269,6 +335,18 @@ extension Kit: ISyncManagerDelegate {
     func didUpdate(tokenBalanceSyncState: SyncState) {
         DispatchQueue.main.async { [weak self] in
             self?.tokenBalanceSyncStateSubject.send(tokenBalanceSyncState)
+        }
+    }
+
+    func didUpdate(transactionsSyncState: SyncState) {
+        DispatchQueue.main.async { [weak self] in
+            self?.transactionsSyncStateSubject.send(transactionsSyncState)
+        }
+    }
+
+    func didUpdate(transactions: [FullTransaction]) {
+        DispatchQueue.main.async { [weak self] in
+            self?.transactionsSubject.send(transactions)
         }
     }
 }
