@@ -3,6 +3,13 @@
 /// Every infrastructure type is accessed through a protocol so that
 /// managers can be unit-tested with mock implementations.
 
+// MARK: - RPC provider protocol
+
+protocol IRpcApiProvider {
+    var source: String { get }
+    func fetch<T>(rpc: JsonRpc<T>) async throws -> T
+}
+
 // MARK: - Storage protocols
 
 protocol ITransactionStorage {
