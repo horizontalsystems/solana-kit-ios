@@ -169,11 +169,13 @@ private extension JupiterApiService {
 
 // MARK: - Errors
 
-extension JupiterApiService {
-    enum JupiterError: Error {
-        case invalidResponse
-        case tokenNotFound(mintAddress: String)
-        case quoteNotAvailable
-        case swapFailed(String)
-    }
+/// Errors thrown by `JupiterApiService`, `TokenProvider`, and `Kit.tokenInfo(...)`.
+///
+/// Wallet-layer callers can catch specific cases — e.g. `.tokenNotFound` to display
+/// a "token not found" message in the Add Token UI.
+public enum JupiterError: Error {
+    case invalidResponse
+    case tokenNotFound(mintAddress: String)
+    case quoteNotAvailable
+    case swapFailed(String)
 }

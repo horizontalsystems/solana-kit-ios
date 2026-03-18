@@ -53,7 +53,7 @@ This project is part of a multi-repo workspace. The planner works inside `solana
 
 - [x] **5.1 V0 Versioned Transactions** — Extend serialization to support V0 transaction format (address lookup tables). Required for `sendRawTransaction()` API and Jupiter swaps. Android uses `sol4k.VersionedTransaction`
 - [x] **5.2 Jupiter Swap Integration** — `JupiterApiService`: DEX swap quotes, route building, swap transaction construction. Requires V0 versioned transactions (5.1). Optional feature from Android kit
-- [ ] **5.3 TokenProvider** — Token information service for enriching token metadata beyond on-chain data
+- [x] **5.3 TokenProvider** — Token information service for enriching token metadata beyond on-chain data
 
 ## Completed
 

@@ -436,6 +436,26 @@ public class Kit {
         return kit
     }
 
+    // MARK: - Static token info lookup
+
+    /// Fetches SPL token metadata for the given mint address without requiring a `Kit` instance.
+    ///
+    /// This is a stateless convenience that creates a temporary `JupiterApiService` internally.
+    /// Use it in flows (e.g. "Add Token") where no wallet session exists yet.
+    ///
+    /// Mirrors the pattern established by `Eip20Kit.Kit.tokenInfo(networkManager:rpcSource:contractAddress:)`.
+    ///
+    /// - Parameters:
+    ///   - networkManager: HsToolKit networking layer.
+    ///   - apiKey: Optional Jupiter API key sent as `x-api-key`.
+    ///   - mintAddress: Base58-encoded SPL token mint address.
+    /// - Returns: `TokenInfo` containing name, symbol, and decimals.
+    /// - Throws: `JupiterError` on lookup failure.
+    public static func tokenInfo(networkManager: NetworkManager, apiKey: String? = nil, mintAddress: String) async throws -> TokenInfo {
+        let service = JupiterApiService(networkManager: networkManager, apiKey: apiKey)
+        return try await service.tokenInfo(mintAddress: mintAddress)
+    }
+
     // MARK: - Fee estimation
 
     /// Estimates the total transaction fee (in SOL) for a raw serialized transaction.

@@ -3,8 +3,8 @@ import Foundation
 /// Token name/symbol/decimals metadata from the Jupiter API.
 ///
 /// Mirrors Android's `TokenInfo.kt` data class.
-struct TokenInfo {
-    let name: String
-    let symbol: String
-    let decimals: Int
+public struct TokenInfo {
+    public let name: String
+    public let symbol: String
+    public let decimals: Int
 }
