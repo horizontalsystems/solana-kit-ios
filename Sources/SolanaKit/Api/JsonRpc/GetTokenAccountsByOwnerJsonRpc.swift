@@ -12,7 +12,7 @@ class GetTokenAccountsByOwnerJsonRpc: JsonRpc<[RpcKeyedAccount]> {
             method: "getTokenAccountsByOwner",
             params: [
                 ownerAddress,
-                ["programId": TokenProgram.programId],
+                ["programId": PublicKey.tokenProgramId.base58],
                 ["encoding": "jsonParsed"],
             ]
         )
