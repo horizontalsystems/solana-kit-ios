@@ -145,6 +145,11 @@ class ApiSyncer {
     // MARK: - Private logic
 
     private func handleBlockHeight(_ blockHeight: Int64) {
+        // A successful RPC response means the poller is healthy — recover from any
+        // prior transient error. The didSet guard suppresses duplicate .ready → .ready
+        // notifications, so this is a no-op when already in the ready state.
+        state = .ready
+
         // Persist only when the value changes (Android lines 104-108).
         if lastBlockHeight != blockHeight {
             lastBlockHeight = blockHeight
