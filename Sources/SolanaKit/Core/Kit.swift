@@ -18,6 +18,10 @@ public class Kit {
     private let tokenAccountManager: TokenAccountManager
     private let syncManager: SyncManager
 
+    // MARK: - Services (for future consumption by TransactionSyncer in milestone 3.4)
+
+    private let jupiterApiService: JupiterApiService
+
     // MARK: - Combine subjects (private)
 
     private let balanceSubject: CurrentValueSubject<Decimal, Never>
@@ -93,6 +97,7 @@ public class Kit {
         balanceManager: BalanceManager,
         tokenAccountManager: TokenAccountManager,
         syncManager: SyncManager,
+        jupiterApiService: JupiterApiService,
         balanceSubject: CurrentValueSubject<Decimal, Never>,
         syncStateSubject: CurrentValueSubject<SyncState, Never>,
         lastBlockHeightSubject: CurrentValueSubject<Int64, Never>,
@@ -104,6 +109,7 @@ public class Kit {
         self.balanceManager = balanceManager
         self.tokenAccountManager = tokenAccountManager
         self.syncManager = syncManager
+        self.jupiterApiService = jupiterApiService
         self.balanceSubject = balanceSubject
         self.syncStateSubject = syncStateSubject
         self.lastBlockHeightSubject = lastBlockHeightSubject
@@ -132,6 +138,11 @@ public class Kit {
             auth: nil
         )
 
+        let nftClient = NftClient(rpcApiProvider: rpcApiProvider)
+
+        // Each service gets its own NetworkManager instance (standard EvmKit pattern).
+        let jupiterApiService = JupiterApiService(networkManager: NetworkManager(logger: nil))
+
         let apiSyncer = ApiSyncer(
             rpcApiProvider: rpcApiProvider,
             connectionManager: connectionManager,
@@ -150,6 +161,7 @@ public class Kit {
         let tokenAccountManager = TokenAccountManager(
             address: address,
             rpcApiProvider: rpcApiProvider,
+            nftClient: nftClient,
             storage: transactionStorage,
             mainStorage: mainStorage
         )
@@ -182,6 +194,7 @@ public class Kit {
             balanceManager: balanceManager,
             tokenAccountManager: tokenAccountManager,
             syncManager: syncManager,
+            jupiterApiService: jupiterApiService,
             balanceSubject: balanceSubject,
             syncStateSubject: syncStateSubject,
             lastBlockHeightSubject: lastBlockHeightSubject,

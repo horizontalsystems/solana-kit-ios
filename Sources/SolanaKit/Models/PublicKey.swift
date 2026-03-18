@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import GRDB
 
@@ -47,12 +48,90 @@ public struct PublicKey {
 
 extension PublicKey {
     // swiftlint:disable force_try
-    static let systemProgramId             = try! PublicKey("11111111111111111111111111111111")
-    static let tokenProgramId              = try! PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
-    static let associatedTokenProgramId    = try! PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
-    static let sysvarRentProgramId         = try! PublicKey("SysvarRent111111111111111111111111111111111")
-    static let computeBudgetProgramId      = try! PublicKey("ComputeBudget111111111111111111111111111111")
+    static let systemProgramId                  = try! PublicKey("11111111111111111111111111111111")
+    static let tokenProgramId                   = try! PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+    static let associatedTokenProgramId         = try! PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+    static let sysvarRentProgramId              = try! PublicKey("SysvarRent111111111111111111111111111111111")
+    static let computeBudgetProgramId           = try! PublicKey("ComputeBudget111111111111111111111111111111")
+    static let metaplexTokenMetadataProgramId   = try! PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
     // swiftlint:enable force_try
+}
+
+// MARK: - Program Derived Address (PDA)
+
+extension PublicKey {
+
+    /// Derives the Metaplex Metadata PDA for the given mint.
+    ///
+    /// Seeds: ["metadata", metaplexTokenMetadataProgramId.bytes, mintPublicKey.bytes]
+    /// Matches Android's `MetadataAccount.pda(mintKey)`.
+    static func metadataPDA(mintPublicKey: PublicKey) throws -> PublicKey {
+        let seeds: [Data] = [
+            Data("metadata".utf8),
+            metaplexTokenMetadataProgramId.data,
+            mintPublicKey.data,
+        ]
+        let (pda, _) = try findProgramAddress(seeds: seeds, programId: metaplexTokenMetadataProgramId)
+        return pda
+    }
+
+    /// Finds the canonical program-derived address by iterating bump seeds 255 → 0.
+    ///
+    /// Returns the first (address, bump) pair whose hash is **not** on the Ed25519 curve,
+    /// matching Solana's `PublicKey.findProgramAddress` specification.
+    static func findProgramAddress(seeds: [Data], programId: PublicKey) throws -> (PublicKey, UInt8) {
+        var bump = UInt8(255)
+        while true {
+            let seedsWithBump = seeds + [Data([bump])]
+            if let address = try? createProgramAddress(seeds: seedsWithBump, programId: programId) {
+                return (address, bump)
+            }
+            if bump == 0 { break }
+            bump -= 1
+        }
+        throw PDAError.couldNotFindValidAddress
+    }
+
+    /// Computes one candidate program-derived address.
+    ///
+    /// Throws `PDAError.invalidSeeds` when the resulting SHA-256 hash falls on the Ed25519 curve
+    /// (i.e., it is a valid public key — not suitable as a PDA).
+    static func createProgramAddress(seeds: [Data], programId: PublicKey) throws -> PublicKey {
+        var hashInput = Data()
+        for seed in seeds {
+            guard seed.count <= 32 else { throw PDAError.maxSeedLengthExceeded }
+            hashInput.append(seed)
+        }
+        hashInput.append(programId.data)
+        hashInput.append(Data("ProgramDerivedAddress".utf8))
+
+        let hashBytes = Data(SHA256.hash(data: hashInput))
+
+        guard !isOnEd25519Curve(hashBytes) else {
+            throw PDAError.invalidSeeds
+        }
+
+        return try PublicKey(data: hashBytes)
+    }
+
+    /// Returns `true` when `bytes` encodes a valid compressed Ed25519 point.
+    ///
+    /// `Curve25519.Signing.PublicKey(rawRepresentation:)` calls BoringSSL's
+    /// `ED25519_check_public_key`, which decompresses the Edwards25519 point and
+    /// validates it is on the curve. It throws for invalid points, not only for
+    /// wrong-length inputs. Verified against the known Metaplex metadata PDA for
+    /// the USDC mint (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`), which
+    /// correctly derives to `2uMBJkes3jHP73XNFQ5iKiX3MoDaKo5RsYfLjETyDox`.
+    private static func isOnEd25519Curve(_ bytes: Data) -> Bool {
+        guard bytes.count == 32 else { return false }
+        return (try? Curve25519.Signing.PublicKey(rawRepresentation: bytes)) != nil
+    }
+
+    enum PDAError: Swift.Error {
+        case maxSeedLengthExceeded
+        case invalidSeeds
+        case couldNotFindValidAddress
+    }
 }
 
 // MARK: - Error

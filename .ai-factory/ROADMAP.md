@@ -34,7 +34,7 @@ This project is part of a multi-repo workspace. The planner works inside `solana
 
 - [x] **3.1 BalanceManager** — Fetch SOL balance via RPC, cache in MainStorage, sync state tracking, Combine notification on change
 - [x] **3.2 TokenAccountManager** — Fetch SPL token accounts via RPC, NFT vs fungible distinction, mint metadata enrichment, cache in TransactionStorage
-- [ ] **3.3 Jupiter Token Metadata + Metaplex NFT Detection** — `JupiterApiService`: REST client for Jupiter API (`api.jup.ag/tokens/v2/search`) for token metadata (name, symbol, decimals). Metaplex on-chain metadata via RPC (`nftClient.findAllByMintList()`) for NFT detection (decimals==0 && supply==1). Android uses Jupiter, NOT SolanaFM
+- [x] **3.3 Jupiter Token Metadata + Metaplex NFT Detection** — `JupiterApiService`: REST client for Jupiter API (`api.jup.ag/tokens/v2/search`) for token metadata (name, symbol, decimals). Metaplex on-chain metadata via RPC (`nftClient.findAllByMintList()`) for NFT detection (decimals==0 && supply==1). Android uses Jupiter, NOT SolanaFM
 - [ ] **3.4 TransactionSyncer** — History sync: fetch signatures → fetch full transactions → parse pre/post balance changes → detect token transfers → resolve mint metadata → persist. Batch RPC. **Largest single component.** Android ref: `TransactionSyncer.kt` + `Extensions.kt` + `NftClient.kt`
 - [ ] **3.5 PendingTransactionSyncer** — Monitor unconfirmed transactions: poll by block height, re-broadcast same base64 tx if blockhash still valid, mark failed if expired
 - [ ] **3.6 TransactionManager** — Aggregation layer: combine confirmed + pending txs, filter by SOL/SPL/direction, expose as publisher

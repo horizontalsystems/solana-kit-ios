@@ -278,7 +278,9 @@ extension TransactionStorage: ITransactionStorage {
 
     func addMintAccount(_ mintAccount: MintAccount) throws {
         try dbPool.write { db in
-            try mintAccount.save(db)
+            // Explicit INSERT OR IGNORE so that pre-registering a token account for
+            // send-SPL never overwrites an already-enriched record with basic data.
+            try mintAccount.insert(db, onConflict: .ignore)
         }
     }
 

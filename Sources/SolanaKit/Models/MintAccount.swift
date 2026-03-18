@@ -3,9 +3,9 @@ import GRDB
 
 /// GRDB record for a Solana SPL token mint account.
 ///
-/// Stores mint metadata (decimals, supply) and optional enrichment from SolanaFM
-/// (name, symbol, URI, collection address). First-write-wins conflict policy mirrors
-/// Android's `@Insert(onConflict = OnConflictStrategy.IGNORE)`.
+/// Stores mint metadata (decimals, supply) and optional enrichment from Metaplex
+/// on-chain metadata (name, symbol, URI, collection address). Upsert conflict policy
+/// uses `.replace` so richer Metaplex data always overwrites basic records.
 public class MintAccount: Record {
     /// The mint address — primary key.
     public var address: String
@@ -15,13 +15,13 @@ public class MintAccount: Record {
     public var supply: Int64?
     /// `true` when the mint represents an NFT (supply == 1, decimals == 0).
     public var isNft: Bool
-    /// Human-readable token name from SolanaFM metadata enrichment.
+    /// Human-readable token name from Metaplex on-chain metadata.
     public var name: String?
-    /// Token symbol from SolanaFM metadata enrichment.
+    /// Token symbol from Metaplex on-chain metadata.
     public var symbol: String?
-    /// Metadata URI (JSON) from SolanaFM metadata enrichment.
+    /// Metadata URI (JSON) from Metaplex on-chain metadata.
     public var uri: String?
-    /// NFT collection mint address from SolanaFM metadata enrichment.
+    /// NFT collection mint address from Metaplex on-chain metadata (verified only).
     public var collectionAddress: String?
 
     // MARK: - Init
@@ -51,9 +51,11 @@ public class MintAccount: Record {
 
     public override class var databaseTableName: String { "mintAccounts" }
 
-    /// First-write-wins: mirrors Android's `OnConflictStrategy.IGNORE`.
+    /// Upsert semantics: newer Metaplex enrichment data overwrites stale basic records.
+    /// `addMintAccount` uses an explicit `.ignore` to avoid clobbering existing enriched records
+    /// when pre-registering a token account for send-SPL.
     public override class var persistenceConflictPolicy: PersistenceConflictPolicy {
-        PersistenceConflictPolicy(insert: .ignore, update: .ignore)
+        PersistenceConflictPolicy(insert: .replace, update: .replace)
     }
 
     enum Columns: String, ColumnExpression {

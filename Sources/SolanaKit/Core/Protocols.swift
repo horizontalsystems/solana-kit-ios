@@ -181,6 +181,20 @@ protocol IApiSyncerDelegate: AnyObject {
     func didUpdateLastBlockHeight(_ lastBlockHeight: Int64)
 }
 
+// MARK: - NFT client protocol
+
+/// Fetches Metaplex on-chain metadata for a list of SPL token mint addresses.
+protocol INftClient {
+    func findAllByMintList(mintAddresses: [String]) async throws -> [String: MetaplexMetadataLayout]
+}
+
+// MARK: - Jupiter API service protocol
+
+/// Fetches token name/symbol/decimals from the Jupiter REST API.
+protocol IJupiterApiService {
+    func tokenInfo(mintAddress: String) async throws -> TokenInfo
+}
+
 // MARK: - IRpcApiProvider typed convenience API
 
 /// Default implementations wrapping `fetch(rpc:)` with typed `JsonRpc` subclasses.

@@ -15,6 +15,7 @@ final class TokenAccountManager {
 
     private let address: String
     private let rpcApiProvider: IRpcApiProvider
+    private let nftClient: INftClient
     private let storage: ITransactionStorage
     private let mainStorage: IMainStorage
 
@@ -44,11 +45,13 @@ final class TokenAccountManager {
     init(
         address: String,
         rpcApiProvider: IRpcApiProvider,
+        nftClient: INftClient,
         storage: ITransactionStorage,
         mainStorage: IMainStorage
     ) {
         self.address = address
         self.rpcApiProvider = rpcApiProvider
+        self.nftClient = nftClient
         self.storage = storage
         self.mainStorage = mainStorage
     }
@@ -89,14 +92,49 @@ final class TokenAccountManager {
             if !newMintAddresses.isEmpty {
                 let sortedNewMints = Array(newMintAddresses).sorted()
                 let bufferInfos = try await rpcApiProvider.getMultipleAccounts(addresses: sortedNewMints)
+
+                // 4a. Fetch Metaplex on-chain metadata for the same mints.
+                let metaplexMap = (try? await nftClient.findAllByMintList(mintAddresses: sortedNewMints)) ?? [:]
+
                 for (index, mintAddress) in sortedNewMints.enumerated() {
                     guard index < bufferInfos.count, let bufferInfo = bufferInfos[index] else { continue }
                     guard let layout = try? SplMintLayout(data: bufferInfo.data) else { continue }
+
+                    let metadataAccount = metaplexMap[mintAddress]
+
+                    // Full NFT detection logic matching Android's TransactionSyncer.getMintAccounts().
+                    // `.programmableNonFungible` (pNFT, Metaplex v1.3+) is also treated as an NFT.
+                    let isNft: Bool
+                    if layout.decimals != 0 {
+                        isNft = false
+                    } else if layout.supply == 1 && layout.mintAuthority == nil {
+                        isNft = true
+                    } else if metadataAccount?.tokenStandard == .nonFungible {
+                        isNft = true
+                    } else if metadataAccount?.tokenStandard == .fungibleAsset {
+                        isNft = true
+                    } else if metadataAccount?.tokenStandard == .nonFungibleEdition {
+                        isNft = true
+                    } else if metadataAccount?.tokenStandard == .programmableNonFungible {
+                        isNft = true
+                    } else {
+                        isNft = false
+                    }
+
+                    // Verified collection address (nil if unverified or absent).
+                    let collectionAddress: String? = metadataAccount?.collection.flatMap { col in
+                        col.verified ? col.key : nil
+                    }
+
                     let mintAccount = MintAccount(
                         address: mintAddress,
                         decimals: Int(layout.decimals),
                         supply: layout.supply <= Int64.max ? Int64(layout.supply) : Int64.max,
-                        isNft: layout.isNft
+                        isNft: isNft,
+                        name: metadataAccount?.name,
+                        symbol: metadataAccount?.symbol,
+                        uri: metadataAccount?.uri,
+                        collectionAddress: collectionAddress
                     )
                     mintAccounts.append(mintAccount)
                 }
