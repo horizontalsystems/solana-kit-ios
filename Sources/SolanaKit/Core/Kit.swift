@@ -212,13 +212,20 @@ public class Kit {
 
         let transactionManager = TransactionManager(storage: transactionStorage)
 
+        let pendingTransactionSyncer = PendingTransactionSyncer(
+            rpcApiProvider: rpcApiProvider,
+            storage: transactionStorage,
+            transactionManager: transactionManager
+        )
+
         let transactionSyncer = TransactionSyncer(
             address: address,
             rpcApiProvider: rpcApiProvider,
             nftClient: nftClient,
             storage: transactionStorage,
             transactionManager: transactionManager,
-            tokenAccountManager: tokenAccountManager
+            tokenAccountManager: tokenAccountManager,
+            pendingTransactionSyncer: pendingTransactionSyncer
         )
 
         // Initialise subjects with persisted values so consumers see correct state

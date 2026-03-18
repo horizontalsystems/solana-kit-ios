@@ -115,6 +115,18 @@ final class TransactionManager {
         return (tokenAccounts, existingMintAddresses)
     }
 
+    // MARK: - Notify
+
+    /// Emits a batch of pending-transaction status updates through `transactionsSubject`.
+    ///
+    /// Called by `PendingTransactionSyncer` after updating pending transactions in storage.
+    /// Mirrors Android `TransactionManager.notifyTransactionsUpdate()` (lines 111–113).
+    func notifyTransactionsUpdate(_ transactions: [FullTransaction]) {
+        DispatchQueue.main.async { [weak self] in
+            self?.transactionsSubject.send(transactions)
+        }
+    }
+
     // MARK: - Read queries
 
     func transactions(incoming: Bool?, fromHash: String?, limit: Int?) -> [FullTransaction] {

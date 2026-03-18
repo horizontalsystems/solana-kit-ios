@@ -26,6 +26,7 @@ final class TransactionSyncer {
     private let storage: ITransactionStorage
     private let transactionManager: TransactionManager
     private let tokenAccountManager: TokenAccountManager
+    private let pendingTransactionSyncer: PendingTransactionSyncer
 
     // MARK: - Delegate
 
@@ -56,7 +57,8 @@ final class TransactionSyncer {
         nftClient: INftClient,
         storage: ITransactionStorage,
         transactionManager: TransactionManager,
-        tokenAccountManager: TokenAccountManager
+        tokenAccountManager: TokenAccountManager,
+        pendingTransactionSyncer: PendingTransactionSyncer
     ) {
         self.address = address
         self.rpcApiProvider = rpcApiProvider
@@ -64,6 +66,7 @@ final class TransactionSyncer {
         self.storage = storage
         self.transactionManager = transactionManager
         self.tokenAccountManager = tokenAccountManager
+        self.pendingTransactionSyncer = pendingTransactionSyncer
     }
 
     // MARK: - Stop
@@ -79,8 +82,12 @@ final class TransactionSyncer {
 
     /// Runs one full incremental sync cycle.
     ///
-    /// Guards against concurrent calls (mirrors Android `TransactionSyncer.sync`).
+    /// Pending transactions are polled on every heartbeat regardless of whether
+    /// the main history sync is in progress (mirrors Android `TransactionSyncer.sync` line 69).
     func sync() async {
+        // Always poll pending transactions first — even if the main sync is already running.
+        await pendingTransactionSyncer.sync()
+
         guard !syncState.syncing else { return }
 
         syncState = .syncing(progress: nil)
