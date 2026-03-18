@@ -3,6 +3,22 @@
 /// Every infrastructure type is accessed through a protocol so that
 /// managers can be unit-tested with mock implementations.
 
+// MARK: - Connection / reachability protocol
+
+import Combine
+
+protocol IConnectionManager {
+    /// Current network reachability state.
+    var isConnected: Bool { get }
+
+    /// Publisher that emits the new value whenever reachability changes.
+    /// Only fires on distinct state transitions (connected → disconnected and vice-versa).
+    var isConnectedPublisher: AnyPublisher<Bool, Never> { get }
+
+    func start()
+    func stop()
+}
+
 // MARK: - RPC provider protocol
 
 protocol IRpcApiProvider {

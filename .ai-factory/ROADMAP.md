@@ -27,7 +27,7 @@ This project is part of a multi-repo workspace. The planner works inside `solana
 
 - [x] **2.1 RPC Client — Base** — Generic `RpcClient` class: HsToolKit.NetworkManager (Alamofire, same as EvmKit/TonKit) + Codable, JSON-RPC 2.0 request/response envelope, error handling, `BufferInfo` adapter for Solana base64-encoded account data (custom Codable adapter, like Android's `BufferInfoJsonAdapter`)
 - [x] **2.2 RPC Client — Endpoints** — Typed methods: `getBalance`, `getBlockHeight`, `getTokenAccountsByOwner`, `getSignaturesForAddress`, `getTransaction`, `sendTransaction`, `getLatestBlockhash`. Batch request support (chunked, used by TransactionSyncer). RPC provider: Alchemy only (same as Android `RpcSource.Alchemy`)
-- [ ] **2.3 ConnectionManager** — `NWPathMonitor`-based reachability: connected/disconnected state, Combine publisher, start/stop lifecycle
+- [x] **2.3 ConnectionManager** — `NWPathMonitor`-based reachability: connected/disconnected state, Combine publisher, start/stop lifecycle
 - [ ] **2.4 ApiSyncer** — Timer-based block height polling: configurable interval from `RpcSource`, start/stop/pause/resume, fires delegate on new block height. Depends on `RpcClient` + `ConnectionManager`
 
 ### Phase 3: Business Logic — Core Sync
