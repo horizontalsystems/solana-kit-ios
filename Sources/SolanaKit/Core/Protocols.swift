@@ -6,6 +6,7 @@
 // MARK: - Connection / reachability protocol
 
 import Combine
+import Foundation
 
 protocol IConnectionManager {
     /// Current network reachability state.
@@ -85,6 +86,37 @@ protocol IMainStorage {
 
     /// Marks initial sync as complete. Idempotent — safe to call multiple times.
     func setInitialSynced() throws
+}
+
+// MARK: - BalanceManager delegate
+
+/// Receives balance updates from `BalanceManager`.
+///
+/// Implemented by `SyncManager`, which fans them out to `Kit` (via `ISyncManagerDelegate`).
+/// Mirrors Android `IBalanceListener` (BalanceManager.kt lines 10-13).
+protocol IBalanceManagerDelegate: AnyObject {
+    /// Called when the SOL balance changes (de-duplicated — only fires on actual change).
+    func didUpdate(balance: Decimal)
+
+    /// Called when the balance sync state transitions to a new distinct value.
+    func didUpdate(balanceSyncState: SyncState)
+}
+
+// MARK: - SyncManager delegate
+
+/// Receives aggregated sync events from `SyncManager` and forwards them to `Kit`.
+///
+/// Implemented by `Kit`, which writes the values to its Combine subjects so that
+/// public publishers emit. Mirrors Android `ISyncListener` (SyncManager.kt lines 13-19).
+protocol ISyncManagerDelegate: AnyObject {
+    /// Called when the SOL balance changes.
+    func didUpdate(balance: Decimal)
+
+    /// Called when the balance sync state transitions to a new distinct value.
+    func didUpdate(balanceSyncState: SyncState)
+
+    /// Called on every block-height poll tick (including unchanged values).
+    func didUpdate(lastBlockHeight: Int64)
 }
 
 // MARK: - ApiSyncer state & delegate

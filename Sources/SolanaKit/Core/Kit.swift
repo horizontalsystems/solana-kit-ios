@@ -14,17 +14,67 @@ public class Kit {
 
     private let connectionManager: ConnectionManager
     private let apiSyncer: ApiSyncer
+    private let balanceManager: BalanceManager
+    private let syncManager: SyncManager
 
-    // TODO: [milestone 3.1] let syncManager: SyncManager
-    // TODO: [milestone 3.1] let balanceManager: BalanceManager
-    // TODO: [milestone 3.1] let tokenAccountManager: TokenAccountManager
-    // TODO: [milestone 3.1] let transactionManager: TransactionManager
+    // MARK: - Combine subjects (private)
+
+    private let balanceSubject: CurrentValueSubject<Decimal, Never>
+    private let syncStateSubject: CurrentValueSubject<SyncState, Never>
+    private let lastBlockHeightSubject: CurrentValueSubject<Int64, Never>
+
+    // MARK: - Public Combine publishers
+
+    /// Emits the current SOL balance (in SOL) whenever it changes.
+    public var balancePublisher: AnyPublisher<Decimal, Never> {
+        balanceSubject.eraseToAnyPublisher()
+    }
+
+    /// Emits the current balance sync state whenever it transitions.
+    public var syncStatePublisher: AnyPublisher<SyncState, Never> {
+        syncStateSubject.eraseToAnyPublisher()
+    }
+
+    /// Emits the latest block height on every polling tick.
+    public var lastBlockHeightPublisher: AnyPublisher<Int64, Never> {
+        lastBlockHeightSubject.eraseToAnyPublisher()
+    }
+
+    // MARK: - Public synchronous accessors
+
+    /// The last known SOL balance (in SOL). Returns the subject's current value.
+    public var balance: Decimal {
+        balanceSubject.value
+    }
+
+    /// The current balance sync state. Returns the subject's current value.
+    public var syncState: SyncState {
+        syncStateSubject.value
+    }
+
+    /// The last known block height. Returns the subject's current value.
+    public var lastBlockHeight: Int64 {
+        lastBlockHeightSubject.value
+    }
 
     // MARK: - Init
 
-    private init(connectionManager: ConnectionManager, apiSyncer: ApiSyncer) {
+    private init(
+        connectionManager: ConnectionManager,
+        apiSyncer: ApiSyncer,
+        balanceManager: BalanceManager,
+        syncManager: SyncManager,
+        balanceSubject: CurrentValueSubject<Decimal, Never>,
+        syncStateSubject: CurrentValueSubject<SyncState, Never>,
+        lastBlockHeightSubject: CurrentValueSubject<Int64, Never>
+    ) {
         self.connectionManager = connectionManager
         self.apiSyncer = apiSyncer
+        self.balanceManager = balanceManager
+        self.syncManager = syncManager
+        self.balanceSubject = balanceSubject
+        self.syncStateSubject = syncStateSubject
+        self.lastBlockHeightSubject = lastBlockHeightSubject
     }
 
     // MARK: - Factory
@@ -54,13 +104,43 @@ public class Kit {
             syncInterval: rpcSource.syncInterval
         )
 
-        // TODO: [milestone 3.1] Set apiSyncer.delegate = syncManager once SyncManager is wired.
-        // Until then the timer runs and persists block height to storage,
-        // but no downstream sync is triggered.
+        // Create BalanceManager first so its init-time storage restore sets `balance`
+        // before we seed the subject with that value.
+        let balanceManager = BalanceManager(
+            address: address,
+            rpcApiProvider: rpcApiProvider,
+            storage: mainStorage
+        )
 
-        // TODO: [milestone 3.1] Wire remaining subsystems here.
+        // Initialise subjects with persisted values so consumers see correct state
+        // immediately after Kit.instance() returns, before any RPC response arrives.
+        let balanceSubject = CurrentValueSubject<Decimal, Never>(balanceManager.balance ?? 0)
+        let syncStateSubject = CurrentValueSubject<SyncState, Never>(.notSynced(error: SyncError.notStarted))
+        let lastBlockHeightSubject = CurrentValueSubject<Int64, Never>(apiSyncer.lastBlockHeight ?? 0)
 
-        return Kit(connectionManager: connectionManager, apiSyncer: apiSyncer)
+        let syncManager = SyncManager(
+            apiSyncer: apiSyncer,
+            balanceManager: balanceManager
+        )
+
+        // Wire delegates: ApiSyncer → SyncManager → Kit
+        apiSyncer.delegate = syncManager
+        balanceManager.delegate = syncManager
+
+        let kit = Kit(
+            connectionManager: connectionManager,
+            apiSyncer: apiSyncer,
+            balanceManager: balanceManager,
+            syncManager: syncManager,
+            balanceSubject: balanceSubject,
+            syncStateSubject: syncStateSubject,
+            lastBlockHeightSubject: lastBlockHeightSubject
+        )
+
+        // Post-init: wire SyncManager → Kit (circular reference avoided via weak delegate)
+        syncManager.delegate = kit
+
+        return kit
     }
 
     // MARK: - Lifecycle
@@ -69,19 +149,17 @@ public class Kit {
     public func start() {
         connectionManager.start()
         apiSyncer.start()
-        // TODO: [milestone 3.1] syncManager.start()
     }
 
     /// Stops all subsystems cleanly.
     public func stop() {
         apiSyncer.stop()
         connectionManager.stop()
-        // TODO: [milestone 3.1] syncManager.stop()
     }
 
     /// Triggers an immediate sync cycle regardless of the timer interval.
     public func refresh() {
-        // TODO: [milestone 3.1] syncManager.refresh()
+        syncManager.refresh()
     }
 
     /// Temporarily suspends polling without tearing down the connection monitor.
@@ -92,5 +170,28 @@ public class Kit {
     /// Resumes polling after a `pause()` call.
     public func resume() {
         apiSyncer.resume()
+    }
+}
+
+// MARK: - ISyncManagerDelegate
+
+extension Kit: ISyncManagerDelegate {
+
+    func didUpdate(balance: Decimal) {
+        DispatchQueue.main.async { [weak self] in
+            self?.balanceSubject.send(balance)
+        }
+    }
+
+    func didUpdate(balanceSyncState: SyncState) {
+        DispatchQueue.main.async { [weak self] in
+            self?.syncStateSubject.send(balanceSyncState)
+        }
+    }
+
+    func didUpdate(lastBlockHeight: Int64) {
+        DispatchQueue.main.async { [weak self] in
+            self?.lastBlockHeightSubject.send(lastBlockHeight)
+        }
     }
 }
