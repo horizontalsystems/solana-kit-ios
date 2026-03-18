@@ -3,23 +3,22 @@ import Foundation
 /// Orchestrates all sync subsystems by wiring `ApiSyncer` heartbeats to downstream managers.
 ///
 /// `SyncManager` sits between the polling layer (`ApiSyncer`) and the business-logic
-/// managers (`BalanceManager`, and in later milestones `TokenAccountManager` and
+/// managers (`BalanceManager`, `TokenAccountManager`, and in later milestones
 /// `TransactionSyncer`). It:
 /// - Reacts to `IApiSyncerDelegate` callbacks (block height ticks, syncer state changes).
 /// - Reacts to `IBalanceManagerDelegate` callbacks (balance change, sync state change).
+/// - Reacts to `ITokenAccountManagerDelegate` callbacks (token accounts, sync state change).
 /// - Forwards all events to `Kit` via `ISyncManagerDelegate`.
 ///
 /// Mirrors Android `SyncManager.kt`, with coroutines replaced by `Task { }` and
 /// listener interfaces replaced by the delegate pattern.
-///
-/// This milestone (3.1) wires balance-only. `TokenAccountManager` and
-/// `TransactionSyncer` will be added in milestones 3.2 and 3.4.
 class SyncManager {
 
     // MARK: - Dependencies
 
     private let apiSyncer: ApiSyncer
     private let balanceManager: BalanceManager
+    private let tokenAccountManager: TokenAccountManager
 
     // MARK: - Delegate (weak — Kit holds SyncManager, not the other way around)
 
@@ -32,11 +31,17 @@ class SyncManager {
         balanceManager.syncState
     }
 
+    /// Current token balance sync state, read directly from `TokenAccountManager`.
+    var tokenBalanceSyncState: SyncState {
+        tokenAccountManager.syncState
+    }
+
     // MARK: - Init
 
-    init(apiSyncer: ApiSyncer, balanceManager: BalanceManager) {
+    init(apiSyncer: ApiSyncer, balanceManager: BalanceManager, tokenAccountManager: TokenAccountManager) {
         self.apiSyncer = apiSyncer
         self.balanceManager = balanceManager
+        self.tokenAccountManager = tokenAccountManager
     }
 
     // MARK: - Refresh
@@ -45,11 +50,14 @@ class SyncManager {
     ///
     /// If the API syncer is not in a ready state (e.g. lost connection), the syncer
     /// is restarted so it can re-establish a polling loop once the network returns.
-    /// Otherwise a direct balance sync is triggered, matching Android `SyncManager.refresh`
-    /// (lines 64-73).
+    /// Otherwise a direct balance + token account sync is triggered, matching Android
+    /// `SyncManager.refresh` (lines 64-73).
     func refresh() {
         if case .ready = apiSyncer.state {
-            Task { [weak self] in await self?.balanceManager.sync() }
+            Task { [weak self] in
+                await self?.balanceManager.sync()
+                await self?.tokenAccountManager.sync()
+            }
         } else {
             apiSyncer.stop()
             apiSyncer.start()
@@ -76,10 +84,11 @@ extension SyncManager: IApiSyncerDelegate {
             break
         case .notReady(let error):
             balanceManager.stop(error: error)
+            tokenAccountManager.stop(error: error)
         }
     }
 
-    /// Receives every block height tick and triggers a full balance sync.
+    /// Receives every block height tick and triggers a full balance + token account sync.
     ///
     /// This is the primary heartbeat that drives downstream data fetches.
     /// Mirrors Android `SyncManager.didUpdateLastBlockHeight` (lines 123-130).
@@ -87,6 +96,7 @@ extension SyncManager: IApiSyncerDelegate {
         delegate?.didUpdate(lastBlockHeight: lastBlockHeight)
         Task { [weak self] in
             await self?.balanceManager.sync()
+            await self?.tokenAccountManager.sync()
         }
     }
 }
@@ -101,5 +111,18 @@ extension SyncManager: IBalanceManagerDelegate {
 
     func didUpdate(balanceSyncState: SyncState) {
         delegate?.didUpdate(balanceSyncState: balanceSyncState)
+    }
+}
+
+// MARK: - ITokenAccountManagerDelegate
+
+extension SyncManager: ITokenAccountManagerDelegate {
+
+    func didUpdate(tokenAccounts: [FullTokenAccount]) {
+        delegate?.didUpdate(tokenAccounts: tokenAccounts)
+    }
+
+    func didUpdate(tokenBalanceSyncState: SyncState) {
+        delegate?.didUpdate(tokenBalanceSyncState: tokenBalanceSyncState)
     }
 }

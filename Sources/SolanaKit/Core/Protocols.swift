@@ -102,6 +102,19 @@ protocol IBalanceManagerDelegate: AnyObject {
     func didUpdate(balanceSyncState: SyncState)
 }
 
+// MARK: - TokenAccountManager delegate
+
+/// Receives token account updates from `TokenAccountManager`.
+///
+/// Implemented by `SyncManager`, which fans them out to `Kit` (via `ISyncManagerDelegate`).
+protocol ITokenAccountManagerDelegate: AnyObject {
+    /// Called when the list of fungible token accounts changes.
+    func didUpdate(tokenAccounts: [FullTokenAccount])
+
+    /// Called when the token balance sync state transitions to a new distinct value.
+    func didUpdate(tokenBalanceSyncState: SyncState)
+}
+
 // MARK: - SyncManager delegate
 
 /// Receives aggregated sync events from `SyncManager` and forwards them to `Kit`.
@@ -117,6 +130,12 @@ protocol ISyncManagerDelegate: AnyObject {
 
     /// Called on every block-height poll tick (including unchanged values).
     func didUpdate(lastBlockHeight: Int64)
+
+    /// Called when the list of fungible token accounts changes.
+    func didUpdate(tokenAccounts: [FullTokenAccount])
+
+    /// Called when the token balance sync state transitions to a new distinct value.
+    func didUpdate(tokenBalanceSyncState: SyncState)
 }
 
 // MARK: - ApiSyncer state & delegate
