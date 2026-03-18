@@ -10,6 +10,25 @@ import HsToolKit
 /// Lifecycle: `start()` → `stop()` (or `refresh()` / `pause()` / `resume()` for fine-grained control).
 public class Kit {
 
+    // MARK: - Constants
+
+    /// Base transaction fee in lamports (5000 lamports = 0.000005 SOL).
+    public static let baseFeeLamports: Int64 = 5000
+
+    /// Approximate transaction fee in SOL for UI display.
+    public static let fee: Decimal = Decimal(string: "0.000155")!
+
+    /// Minimum SOL balance required to keep a token account alive (rent-exempt reserve).
+    public static let accountRentAmount: Decimal = Decimal(string: "0.001")!
+
+    // MARK: - Public metadata
+
+    /// Base58-encoded Solana public key for this wallet instance.
+    public let address: String
+
+    /// `true` when this kit instance targets mainnet-beta.
+    public let isMainnet: Bool
+
     // MARK: - Subsystems (wired in Kit.instance())
 
     private let connectionManager: ConnectionManager
@@ -22,6 +41,7 @@ public class Kit {
 
     // MARK: - Services
 
+    private let rpcApiProvider: IRpcApiProvider
     private let jupiterApiService: JupiterApiService
 
     // MARK: - Combine subjects (private)
@@ -129,6 +149,21 @@ public class Kit {
         tokenAccountManager.fullTokenAccount(mintAddress: mintAddress)
     }
 
+    /// Returns a diagnostic snapshot for debugging and support tooling.
+    ///
+    /// Mirrors Android's `SolanaKit.statusInfo()` and EvmKit's `Kit.statusInfo()`.
+    public func statusInfo() -> [(String, Any)] {
+        let blockHeight = lastBlockHeightSubject.value
+        let blockHeightDisplay: Any = blockHeight > 0 ? blockHeight : "N/A"
+        return [
+            ("Last Block Height", blockHeightDisplay),
+            ("Sync State", syncStateSubject.value.description),
+            ("Token Sync State", tokenBalanceSyncStateSubject.value.description),
+            ("Transactions Sync State", transactionsSyncStateSubject.value.description),
+            ("RPC Source", rpcApiProvider.source),
+        ]
+    }
+
     // MARK: - Transaction query methods
 
     /// Returns all transactions, optionally filtered by direction, paginated from `fromHash`.
@@ -149,6 +184,8 @@ public class Kit {
     // MARK: - Init
 
     private init(
+        address: String,
+        isMainnet: Bool,
         connectionManager: ConnectionManager,
         apiSyncer: ApiSyncer,
         balanceManager: BalanceManager,
@@ -156,6 +193,7 @@ public class Kit {
         transactionManager: TransactionManager,
         transactionSyncer: TransactionSyncer,
         syncManager: SyncManager,
+        rpcApiProvider: IRpcApiProvider,
         jupiterApiService: JupiterApiService,
         balanceSubject: CurrentValueSubject<Decimal, Never>,
         syncStateSubject: CurrentValueSubject<SyncState, Never>,
@@ -165,6 +203,8 @@ public class Kit {
         transactionsSyncStateSubject: CurrentValueSubject<SyncState, Never>,
         transactionsSubject: PassthroughSubject<[FullTransaction], Never>
     ) {
+        self.address = address
+        self.isMainnet = isMainnet
         self.connectionManager = connectionManager
         self.apiSyncer = apiSyncer
         self.balanceManager = balanceManager
@@ -172,6 +212,7 @@ public class Kit {
         self.transactionManager = transactionManager
         self.transactionSyncer = transactionSyncer
         self.syncManager = syncManager
+        self.rpcApiProvider = rpcApiProvider
         self.jupiterApiService = jupiterApiService
         self.balanceSubject = balanceSubject
         self.syncStateSubject = syncStateSubject
@@ -277,6 +318,8 @@ public class Kit {
         transactionSyncer.delegate = syncManager
 
         let kit = Kit(
+            address: address,
+            isMainnet: rpcSource.isMainnet,
             connectionManager: connectionManager,
             apiSyncer: apiSyncer,
             balanceManager: balanceManager,
@@ -284,6 +327,7 @@ public class Kit {
             transactionManager: transactionManager,
             transactionSyncer: transactionSyncer,
             syncManager: syncManager,
+            rpcApiProvider: rpcApiProvider,
             jupiterApiService: jupiterApiService,
             balanceSubject: balanceSubject,
             syncStateSubject: syncStateSubject,
@@ -298,6 +342,17 @@ public class Kit {
         syncManager.delegate = kit
 
         return kit
+    }
+
+    // MARK: - Static cleanup
+
+    /// Deletes all persisted data (both GRDB databases) for the given wallet identifier.
+    ///
+    /// Call this when a wallet is removed from the application.
+    /// Mirrors Android's `SolanaKit.clear(context, walletId)`.
+    public static func clear(walletId: String) throws {
+        try MainStorage.clear(walletId: walletId)
+        try TransactionStorage.clear(walletId: walletId)
     }
 
     // MARK: - Lifecycle
