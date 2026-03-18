@@ -207,9 +207,11 @@ protocol INftClient {
 
 // MARK: - Jupiter API service protocol
 
-/// Fetches token name/symbol/decimals from the Jupiter REST API.
+/// Interacts with the Jupiter REST API for token metadata and swap routing.
 protocol IJupiterApiService {
     func tokenInfo(mintAddress: String) async throws -> TokenInfo
+    func quote(inputMint: String, outputMint: String, amount: UInt64, slippageBps: Int) async throws -> JupiterQuoteResponse
+    func swap(quoteResponse: JupiterQuoteResponse, userPublicKey: String, prioritizationMaxLamports: Int64?) async throws -> JupiterSwapResponse
 }
 
 // MARK: - IRpcApiProvider typed convenience API

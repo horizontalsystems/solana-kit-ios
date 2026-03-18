@@ -237,6 +237,42 @@ public class Kit {
         try await transactionManager.sendRawTransaction(rawTransaction: rawTransaction, signer: signer)
     }
 
+    // MARK: - Jupiter Swap
+
+    /// Fetches a swap quote from Jupiter for the given token pair and amount.
+    ///
+    /// - Parameters:
+    ///   - inputMint: Base58 address of the token being sold.
+    ///   - outputMint: Base58 address of the token being bought.
+    ///   - amount: Input token amount in the token's smallest unit (e.g. lamports for SOL).
+    ///   - slippageBps: Maximum allowed slippage in basis points (e.g. 50 = 0.5%).
+    /// - Returns: `JupiterQuoteResponse` with the best route and expected output amount.
+    public func jupiterQuote(inputMint: String, outputMint: String, amount: UInt64, slippageBps: Int) async throws -> JupiterQuoteResponse {
+        try await jupiterApiService.quote(inputMint: inputMint, outputMint: outputMint, amount: amount, slippageBps: slippageBps)
+    }
+
+    /// Builds a Jupiter swap transaction for the given quote.
+    ///
+    /// Automatically supplies this wallet's public key as the fee-payer.
+    /// The returned `JupiterSwapResponse.swapTransaction` is a base64-encoded V0 versioned
+    /// transaction. Typical usage:
+    /// ```swift
+    /// let quote = try await kit.jupiterQuote(inputMint:outputMint:amount:slippageBps:)
+    /// let swapResponse = try await kit.jupiterSwapTransaction(quoteResponse: quote)
+    /// let rawTx = Data(base64Encoded: swapResponse.swapTransaction)!
+    /// let fee = try Kit.estimateFee(rawTransaction: rawTx)
+    /// let result = try await kit.sendRawTransaction(rawTransaction: rawTx, signer: signer)
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - quoteResponse: Quote obtained from `jupiterQuote(inputMint:outputMint:amount:slippageBps:)`.
+    ///   - prioritizationMaxLamports: Optional cap for the Compute Budget priority fee in lamports.
+    ///     When `nil`, no prioritization fee instruction is added.
+    /// - Returns: `JupiterSwapResponse` with the base64-encoded transaction and fee metadata.
+    public func jupiterSwapTransaction(quoteResponse: JupiterQuoteResponse, prioritizationMaxLamports: Int64? = nil) async throws -> JupiterSwapResponse {
+        try await jupiterApiService.swap(quoteResponse: quoteResponse, userPublicKey: address, prioritizationMaxLamports: prioritizationMaxLamports)
+    }
+
     // MARK: - Init
 
     private init(
