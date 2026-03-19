@@ -25,18 +25,26 @@ enum CompactU16 {
     /// Decodes a compact-u16 integer from the start of `data`.
     ///
     /// - Returns: A tuple containing the decoded value and the number of bytes consumed.
+    ///   Returns `(0, 0)` if the encoding is truncated (last byte has continuation bit set).
     static func decode(_ data: Data) -> (value: Int, bytesRead: Int) {
         precondition(!data.isEmpty, "CompactU16.decode: called with empty data")
         var value = 0
         var bytesRead = 0
         var shift = 0
+        var lastByte: UInt8 = 0
         for byte in data {
             value |= Int(byte & 0x7F) << shift
             shift += 7
             bytesRead += 1
+            lastByte = byte
             if byte & 0x80 == 0 {
                 break  // no continuation bit — this was the last byte
             }
+        }
+        // If the last consumed byte still has the continuation bit set, the
+        // encoding was truncated — signal failure so callers can detect it.
+        if lastByte & 0x80 != 0 {
+            return (value: 0, bytesRead: 0)
         }
         return (value: value, bytesRead: bytesRead)
     }

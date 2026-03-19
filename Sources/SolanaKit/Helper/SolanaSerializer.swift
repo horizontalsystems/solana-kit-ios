@@ -70,6 +70,7 @@ enum SolanaSerializer {
     enum SerializerError: Swift.Error {
         case invalidBlockhash(String)
         case invalidSignatureLength(Int)
+        case signatureCountMismatch(expected: Int, got: Int)
         case accountIndexOutOfBounds(PublicKey)
         case invalidTransactionData(String)
     }
@@ -155,6 +156,14 @@ enum SolanaSerializer {
         }
 
         let accountKeys = groupA + groupB + groupC + groupD
+
+        // Solana wire format uses UInt8 for header counts (max 255) and account
+        // indices (max 255). Cap at 255 to prevent UInt8 overflow in the header.
+        guard accountKeys.count < 256 else {
+            throw SerializerError.invalidTransactionData(
+                "Transaction references \(accountKeys.count) unique accounts, maximum is 255"
+            )
+        }
 
         // ── 4. Build header ───────────────────────────────────────────────────
         let header = MessageHeader(
@@ -297,6 +306,11 @@ enum SolanaSerializer {
     ///
     /// - Throws: `SerializerError.invalidSignatureLength` if any signature is not 64 bytes.
     static func serialize(signatures: [Data], message: CompiledMessage) throws -> Data {
+        let expected = Int(message.header.numRequiredSignatures)
+        guard signatures.count == expected else {
+            throw SerializerError.signatureCountMismatch(expected: expected, got: signatures.count)
+        }
+
         var result = Data()
 
         result.append(contentsOf: CompactU16.encode(signatures.count))
@@ -497,12 +511,17 @@ enum SolanaSerializer {
     /// Compiles instructions, wraps them with the provided signatures, and returns
     /// the full transaction wire-format `Data` ready for base64 encoding and broadcast.
     ///
-    /// Typical single-signer flow:
+    /// Typical single-signer flow (compiles once):
     /// ```swift
-    /// let messageBytes = try SolanaSerializer.serializeMessage(feePayer:instructions:recentBlockhash:)
+    /// let message      = try SolanaSerializer.compile(feePayer:instructions:recentBlockhash:)
+    /// let messageBytes = SolanaSerializer.serialize(message: message)
     /// let signature    = try signer.sign(data: messageBytes)
-    /// let txData       = try SolanaSerializer.buildTransaction(feePayer:instructions:recentBlockhash:signatures:[signature])
+    /// let txData       = try SolanaSerializer.serialize(signatures: [signature], message: message)
     /// ```
+    ///
+    /// This convenience method compiles and serializes in one call. If you need
+    /// the message bytes for signing first, use `compile()` + `serialize(message:)`
+    /// + `serialize(signatures:message:)` directly to avoid compiling twice.
     static func buildTransaction(
         feePayer: PublicKey,
         instructions: [TransactionInstruction],
