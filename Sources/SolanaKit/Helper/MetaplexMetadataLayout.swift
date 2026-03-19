@@ -191,14 +191,6 @@ struct MetaplexMetadataLayout {
 // MARK: - Data helpers
 
 private extension Data {
-    /// Reads a little-endian integer of type `T` starting at `offset`.
-    func readLE<T: FixedWidthInteger>(offset: Int) -> T {
-        let size = MemoryLayout<T>.size
-        return subdata(in: offset ..< offset + size).withUnsafeBytes { ptr in
-            T(littleEndian: ptr.loadUnaligned(as: T.self))
-        }
-    }
-
     /// Reads a Borsh-encoded string (u32 length prefix + UTF-8 bytes), trims null bytes,
     /// and advances `cursor` past the consumed bytes.
     func readBorshString(cursor: inout Int) throws -> String {

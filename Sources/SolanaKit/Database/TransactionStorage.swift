@@ -85,7 +85,7 @@ final class TransactionStorage {
                 t.column(MintAccount.Columns.symbol.name, .text)
                 t.column(MintAccount.Columns.uri.name, .text)
                 t.column(MintAccount.Columns.collectionAddress.name, .text)
-                t.primaryKey([MintAccount.Columns.address.name], onConflict: .ignore)
+                t.primaryKey([MintAccount.Columns.address.name], onConflict: .replace)
             }
 
             // lastSyncedTransactions

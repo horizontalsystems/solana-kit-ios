@@ -1,4 +1,5 @@
 import Foundation
+import HsExtensions
 
 /// Fetches Metaplex on-chain metadata for a list of SPL token mint addresses.
 ///
@@ -50,7 +51,7 @@ final class NftClient: INftClient {
         let metadataProgramId = PublicKey.metaplexTokenMetadataProgramId.base58
 
         // Fetch in chunks of `chunkSize`.
-        for chunk in pdaMappings.chunked(into: chunkSize) {
+        for chunk in pdaMappings.hs.chunked(into: chunkSize) {
             let pdaAddresses = chunk.map { $0.pdaAddress }
             let bufferInfos = try await rpcApiProvider.getMultipleAccounts(addresses: pdaAddresses)
 
