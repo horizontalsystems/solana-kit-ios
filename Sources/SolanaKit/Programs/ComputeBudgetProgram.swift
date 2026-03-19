@@ -111,17 +111,18 @@ enum ComputeBudgetProgram {
     /// feeSol        = totalLamports ÷ 1_000_000_000
     /// ```
     ///
-    /// If no compute budget instructions are found, only the base fee (converted to SOL) is returned.
+    /// Uses Solana runtime defaults (0 microLamports price, 200,000 CU limit) when
+    /// the corresponding instruction is absent.
     ///
     /// Mirrors Android `VersionedTransaction.calculateFee(baseFeeLamports)`.
     static func calculateFee(from compiledMessage: SolanaSerializer.CompiledMessage, baseFeeLamports: Int64) -> Decimal {
         let baseFee = Decimal(baseFeeLamports)
 
-        guard let computeUnitPrice = parseComputeUnitPrice(from: compiledMessage),
-              let computeUnitLimit  = parseComputeUnitLimit(from: compiledMessage)
-        else {
-            return baseFee / Decimal(1_000_000_000)
-        }
+        // Solana runtime defaults: 0 microLamports price, 200_000 CU limit.
+        // Matches sol4k VersionedTransaction which initializes cuPrice=0, cuLimit=200_000
+        // before scanning instructions.
+        let computeUnitPrice = parseComputeUnitPrice(from: compiledMessage) ?? 0
+        let computeUnitLimit = parseComputeUnitLimit(from: compiledMessage) ?? 200_000
 
         // Priority fee: microLamports × CU ÷ 1_000_000 = lamports
         let priorityFee = Decimal(computeUnitPrice) * Decimal(computeUnitLimit) / Decimal(1_000_000)
