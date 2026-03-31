@@ -1,22 +1,8 @@
 import Foundation
+import HsToolKit
 
 /// Fetches, parses, and persists the transaction history for a single wallet address.
-///
-/// `TransactionSyncer` implements incremental signature-based sync:
-/// 1. Fetches all new signatures via `getSignaturesForAddress` (paginated, 1000/page).
-/// 2. Batch-fetches full transaction details via `getTransaction` (100 per batch).
-/// 3. Parses each response into `Transaction` + `TokenTransfer` + `MintAccount` + `TokenAccount` records.
-/// 4. Resolves mint metadata for newly seen tokens.
-/// 5. Hands off to `TransactionManager.handle(...)` for merge + persistence + Combine emission.
-///
-/// Mirrors Android `TransactionSyncer.kt`, with coroutines replaced by Swift `async`/`await`
-/// and the listener interface replaced by a typed delegate.
 final class TransactionSyncer {
-
-    // MARK: - Constants
-
-    private let signaturesPageSize = 1000
-    private let syncSourceName = "rpc/getSignaturesForAddress"
 
     // MARK: - Dependencies
 
@@ -27,6 +13,8 @@ final class TransactionSyncer {
     private let transactionManager: TransactionManager
     private let tokenAccountManager: TokenAccountManager
     private let pendingTransactionSyncer: PendingTransactionSyncer
+    private let signatureProvider: ISignatureProvider
+    private let logger: Logger?
 
     // MARK: - Delegate
 
@@ -38,14 +26,11 @@ final class TransactionSyncer {
 
     /// Current sync state of this syncer.
     ///
-    /// On every distinct transition the delegate is notified on `DispatchQueue.main`.
+    /// On every distinct transition the delegate is notified.
     private(set) var syncState: SyncState = .notSynced(error: SyncError.notStarted) {
         didSet {
             guard syncState != oldValue else { return }
-            let state = syncState
-            DispatchQueue.main.async { [weak self] in
-                self?.delegate?.didUpdate(transactionsSyncState: state)
-            }
+            delegate?.didUpdate(transactionsSyncState: syncState)
         }
     }
 
@@ -58,7 +43,9 @@ final class TransactionSyncer {
         storage: ITransactionStorage,
         transactionManager: TransactionManager,
         tokenAccountManager: TokenAccountManager,
-        pendingTransactionSyncer: PendingTransactionSyncer
+        pendingTransactionSyncer: PendingTransactionSyncer,
+        signatureProvider: ISignatureProvider,
+        logger: Logger? = nil
     ) {
         self.address = address
         self.rpcApiProvider = rpcApiProvider
@@ -67,6 +54,8 @@ final class TransactionSyncer {
         self.transactionManager = transactionManager
         self.tokenAccountManager = tokenAccountManager
         self.pendingTransactionSyncer = pendingTransactionSyncer
+        self.signatureProvider = signatureProvider
+        self.logger = logger
     }
 
     // MARK: - Stop
@@ -88,36 +77,51 @@ final class TransactionSyncer {
         // Always poll pending transactions first — even if the main sync is already running.
         await pendingTransactionSyncer.sync()
 
-        guard !syncState.syncing else { return }
+        guard !syncState.syncing else {
+            logger?.debug("TransactionSyncer: sync already in progress, skipping")
+            return
+        }
 
+        logger?.debug("TransactionSyncer: starting sync for \(address)")
         syncState = .syncing(progress: nil)
 
         do {
-            // Step 1: Fetch all new signatures since the last confirmed transaction.
-            let signatureInfos = try await fetchAllSignatures()
+            // Step 1: Fetch all new signatures via pluggable provider.
+            let signatureInfos = try await signatureProvider.fetchNewSignatures()
+            logger?.debug("TransactionSyncer: fetched \(signatureInfos.count) new signature(s)")
 
             guard !signatureInfos.isEmpty else {
+                logger?.debug("TransactionSyncer: no new signatures, sync complete")
                 syncState = .synced
                 return
             }
 
             // Step 2: Batch-fetch full transaction responses.
             let signatures = signatureInfos.map { $0.signature }
+            logger?.debug("TransactionSyncer: batch-fetching \(signatures.count) transaction(s)")
             let txResponses = try await rpcApiProvider.fetchTransactionsBatch(signatures: signatures)
+            logger?.debug("TransactionSyncer: received \(txResponses.count) transaction response(s)")
 
             // Steps 3-4: Parse each transaction.
             var parsedTransactions: [ParsedTransaction] = []
+            var skippedCount = 0
             for signatureInfo in signatureInfos {
-                guard let response = txResponses[signatureInfo.signature] else { continue }
+                guard let response = txResponses[signatureInfo.signature] else {
+                    skippedCount += 1
+                    continue
+                }
                 let parsed = parseTransaction(signature: signatureInfo.signature, response: response)
                 parsedTransactions.append(parsed)
             }
+            logger?.debug("TransactionSyncer: parsed \(parsedTransactions.count) transaction(s), skipped \(skippedCount) missing response(s)")
 
             // Step 5-6: Collect placeholder mints from all parsed transactions.
             let allPlaceholders = parsedTransactions.flatMap { $0.mintAccounts }
 
             // Step 7: Resolve mint metadata for newly seen tokens.
+            logger?.debug("TransactionSyncer: resolving \(allPlaceholders.count) placeholder mint(s)")
             let resolvedNewMints = await resolveMintAccounts(placeholderMints: allPlaceholders)
+            logger?.debug("TransactionSyncer: resolved \(resolvedNewMints.count) new mint account(s)")
             let resolvedMintMap: [String: MintAccount] = {
                 var map: [String: MintAccount] = [:]
                 for mint in resolvedNewMints { map[mint.address] = mint }
@@ -141,6 +145,7 @@ final class TransactionSyncer {
             let allTokenAccounts = finalParsed.flatMap { $0.tokenAccounts }
 
             // Step 10: Persist and emit via TransactionManager.
+            logger?.debug("TransactionSyncer: persisting \(allTransactions.count) tx, \(allTokenTransfers.count) token transfers, \(allMintAccounts.count) mints, \(allTokenAccounts.count) token accounts")
             let (discoveredTokenAccounts, existingMintAddresses) = transactionManager.handle(
                 transactions: allTransactions,
                 tokenTransfers: allTokenTransfers,
@@ -150,58 +155,24 @@ final class TransactionSyncer {
 
             // Step 11: Register new token accounts with TokenAccountManager.
             if !discoveredTokenAccounts.isEmpty || !existingMintAddresses.isEmpty {
+                logger?.debug("TransactionSyncer: registering \(discoveredTokenAccounts.count) new token account(s), \(existingMintAddresses.count) existing mint(s)")
                 await tokenAccountManager.addAccount(
                     receivedTokenAccounts: discoveredTokenAccounts,
                     existingMintAddresses: existingMintAddresses
                 )
             }
 
-            // Step 12: Save the incremental sync cursor (newest signature).
-            if let newestSignature = signatures.first {
-                try? storage.save(
-                    lastSyncedTransaction: LastSyncedTransaction(
-                        syncSourceName: syncSourceName,
-                        hash: newestSignature
-                    )
-                )
-            }
-
+            logger?.debug("TransactionSyncer: sync completed successfully")
             syncState = .synced
 
         } catch {
-            guard !(error is CancellationError) else { return }
+            guard !(error is CancellationError) else {
+                logger?.debug("TransactionSyncer: sync cancelled")
+                return
+            }
+            logger?.error("TransactionSyncer: sync failed: \(error)")
             syncState = .notSynced(error: error)
         }
-    }
-
-    // MARK: - Signature fetching
-
-    /// Fetches all new transaction signatures since the last confirmed transaction.
-    ///
-    /// Pages through `getSignaturesForAddress` in chunks of 1000 until fewer than 1000
-    /// are returned (indicating the full new history has been fetched).
-    /// Mirrors Android `TransactionSyncer.getSignaturesFromRpcNode`.
-    private func fetchAllSignatures() async throws -> [SignatureInfo] {
-        // The `until` cursor: stop fetching when we reach the last known confirmed hash.
-        let until = storage.lastNonPendingTransaction()?.hash
-
-        var allSignatures: [SignatureInfo] = []
-        var before: String? = nil
-
-        repeat {
-            let chunk = try await rpcApiProvider.getSignaturesForAddress(
-                address: address,
-                limit: signaturesPageSize,
-                before: before,
-                until: until
-            )
-            allSignatures.append(contentsOf: chunk)
-            before = chunk.last?.signature
-
-            if chunk.count < signaturesPageSize { break }
-        } while true
-
-        return allSignatures
     }
 
     // MARK: - Transaction parsing
@@ -210,6 +181,7 @@ final class TransactionSyncer {
     ///
     /// Mirrors Android `TransactionSyncer.parseTransaction` (lines 195–283).
     private func parseTransaction(signature: String, response: RpcTransactionResponse) -> ParsedTransaction {
+        logger?.verbose("TransactionSyncer: parsing tx \(signature)")
         let meta = response.meta
         let blockTime = response.blockTime ?? 0
         let accountKeys = response.transaction?.message?.accountKeys?.map { $0.pubkey } ?? []
@@ -331,6 +303,8 @@ final class TransactionSyncer {
             pending: false
         )
 
+        logger?.verbose("TransactionSyncer: tx \(signature) — fee: \(feeString), SOL from: \(solFrom ?? "nil") to: \(solTo ?? "nil"), amount: \(amountString ?? "nil"), tokenTransfers: \(tokenTransfers.count), error: \(errorString ?? "none")")
+
         return ParsedTransaction(
             transaction: transaction,
             tokenTransfers: tokenTransfers,
@@ -386,22 +360,28 @@ final class TransactionSyncer {
         // Collect unique addresses from placeholders, filter to those not already in DB.
         let uniqueAddresses = Array(Set(placeholderMints.map { $0.address }))
         let newAddresses = uniqueAddresses.filter { storage.mintAccount(address: $0) == nil }
+        logger?.debug("TransactionSyncer: resolveMintAccounts — \(uniqueAddresses.count) unique, \(newAddresses.count) new (not in DB)")
 
-        guard !newAddresses.isEmpty else { return [] }
+        guard !newAddresses.isEmpty else {
+            logger?.debug("TransactionSyncer: all mints already in DB, nothing to resolve")
+            return []
+        }
 
         // Fetch raw mint account data from the RPC node.
         let bufferInfos: [BufferInfo?]
         do {
             bufferInfos = try await rpcApiProvider.getMultipleAccounts(addresses: newAddresses)
         } catch {
-            // Return basic placeholders (with decimals from parsed token balances) on failure.
+            logger?.error("TransactionSyncer: getMultipleAccounts failed for mints: \(error)")
             return newAddresses.compactMap { addr in
                 placeholderMints.first(where: { $0.address == addr })
             }
         }
 
         // Fetch Metaplex NFT metadata (graceful degradation — mirrors Android's getOrThrow wrapped in try).
+        logger?.debug("TransactionSyncer: fetching Metaplex metadata for \(newAddresses.count) mint(s)")
         let metaplexMap = (try? await nftClient.findAllByMintList(mintAddresses: newAddresses)) ?? [:]
+        logger?.debug("TransactionSyncer: Metaplex returned metadata for \(metaplexMap.count) mint(s)")
 
         var resolvedMints: [MintAccount] = []
 
@@ -444,7 +424,7 @@ final class TransactionSyncer {
             // Safe Int64 conversion for UInt64 supply.
             let supply: Int64? = layout.supply <= UInt64(Int64.max) ? Int64(layout.supply) : Int64.max
 
-            resolvedMints.append(MintAccount(
+            let mint = MintAccount(
                 address: mintAddress,
                 decimals: Int(layout.decimals),
                 supply: supply,
@@ -453,7 +433,9 @@ final class TransactionSyncer {
                 symbol: metadataAccount?.symbol,
                 uri: metadataAccount?.uri,
                 collectionAddress: collectionAddress
-            ))
+            )
+            logger?.verbose("TransactionSyncer: resolved mint \(mintAddress) — \(mint.symbol ?? "?") decimals: \(mint.decimals), isNft: \(isNft)")
+            resolvedMints.append(mint)
         }
 
         return resolvedMints
