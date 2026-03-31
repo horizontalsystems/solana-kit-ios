@@ -33,12 +33,17 @@ final class TokenAccountSignatureProvider: ISignatureProvider {
         logger?.debug("TokenAccountSignatureProvider: syncing \(tokenAccounts.count) ATA(s)")
 
         var allSignatures: [SignatureInfo] = []
+        var ataSuccessCount = 0
+        var ataFailCount = 0
 
         for account in tokenAccounts {
             let ataAddress = account.address
+            let mintAddress = account.mintAddress
             let cursorName = Self.cursorName(ataAddress: ataAddress)
             let until = storage.lastSyncedTransaction(syncSourceName: cursorName)?.hash
             let isFirstSync = until == nil
+
+            logger?.debug("TokenAccountSignatureProvider: ATA \(ataAddress) (mint: \(mintAddress)), cursor: \(until ?? "nil"), firstSync: \(isFirstSync)")
 
             do {
                 var ataSignatures: [SignatureInfo] = []
@@ -52,6 +57,7 @@ final class TokenAccountSignatureProvider: ISignatureProvider {
                         before: before,
                         until: until
                     )
+                    logger?.debug("TokenAccountSignatureProvider: ATA \(ataAddress) page \(pageCount + 1) returned \(chunk.count) signature(s)")
                     ataSignatures.append(contentsOf: chunk)
                     before = chunk.last?.signature
                     pageCount += 1
@@ -65,17 +71,19 @@ final class TokenAccountSignatureProvider: ISignatureProvider {
                         syncSourceName: cursorName,
                         hash: newestSignature
                     ))
-                    logger?.debug("TokenAccountSignatureProvider: ATA \(ataAddress) — \(ataSignatures.count) new signature(s)")
+                    logger?.debug("TokenAccountSignatureProvider: ATA \(ataAddress) — \(ataSignatures.count) new signature(s), saved cursor \(newestSignature)")
                 }
 
                 allSignatures.append(contentsOf: ataSignatures)
+                ataSuccessCount += 1
             } catch {
-                logger?.error("TokenAccountSignatureProvider: ATA \(ataAddress) failed: \(error), skipping")
+                ataFailCount += 1
+                logger?.error("TokenAccountSignatureProvider: ATA \(ataAddress) (mint: \(mintAddress)) failed: \(error), skipping")
                 continue
             }
         }
 
-        logger?.debug("TokenAccountSignatureProvider: total \(allSignatures.count) signature(s)")
+        logger?.debug("TokenAccountSignatureProvider: done — \(allSignatures.count) signature(s), \(ataSuccessCount) ATA(s) ok, \(ataFailCount) failed")
         return allSignatures
     }
 

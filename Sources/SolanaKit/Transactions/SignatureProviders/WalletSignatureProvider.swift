@@ -22,18 +22,21 @@ final class WalletSignatureProvider: ISignatureProvider {
 
     func fetchNewSignatures() async throws -> [SignatureInfo] {
         let until = storage.lastSyncedTransaction(syncSourceName: Self.syncSourceName)?.hash
-        logger?.debug("WalletSignatureProvider: fetching for \(address), until: \(until ?? "nil")")
+        logger?.debug("WalletSignatureProvider: fetching for \(address), cursor: \(until ?? "nil")")
 
         var allSignatures: [SignatureInfo] = []
         var before: String?
+        var pageNumber = 0
 
         repeat {
+            pageNumber += 1
             let chunk = try await rpcApiProvider.getSignaturesForAddress(
                 address: address,
                 limit: pageSize,
                 before: before,
                 until: until
             )
+            logger?.debug("WalletSignatureProvider: page \(pageNumber) returned \(chunk.count) signature(s)")
             allSignatures.append(contentsOf: chunk)
             before = chunk.last?.signature
             if chunk.count < pageSize { break }
@@ -45,9 +48,10 @@ final class WalletSignatureProvider: ISignatureProvider {
                 syncSourceName: Self.syncSourceName,
                 hash: newestSignature
             ))
+            logger?.debug("WalletSignatureProvider: saved cursor \(newestSignature)")
         }
 
-        logger?.debug("WalletSignatureProvider: fetched \(allSignatures.count) signature(s)")
+        logger?.debug("WalletSignatureProvider: total \(allSignatures.count) signature(s) in \(pageNumber) page(s)")
         return allSignatures
     }
 }
