@@ -66,7 +66,7 @@ final class TokenAccountSignatureProvider: ISignatureProvider {
                     if isFirstSync, pageCount >= maxFirstSyncPages { break }
                 } while true
 
-                if let newestSignature = ataSignatures.first {
+                if let newestSignature = ataSignatures.first?.signature {
                     try? storage.save(lastSyncedTransaction: LastSyncedTransaction(
                         syncSourceName: cursorName,
                         hash: newestSignature

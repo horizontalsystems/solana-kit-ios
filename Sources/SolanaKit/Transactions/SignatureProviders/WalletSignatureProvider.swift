@@ -43,7 +43,7 @@ final class WalletSignatureProvider: ISignatureProvider {
         } while true
 
         // Save cursor on success.
-        if let newestSignature = allSignatures.first {
+        if let newestSignature = allSignatures.first?.signature {
             try? storage.save(lastSyncedTransaction: LastSyncedTransaction(
                 syncSourceName: Self.syncSourceName,
                 hash: newestSignature
