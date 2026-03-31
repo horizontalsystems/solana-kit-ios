@@ -152,7 +152,8 @@ final class TransactionStorage {
         fromHash: String?,
         limit: Int?
     ) -> [FullTransaction] {
-        try! dbPool.read { db in
+        if Thread.isMainThread { print("🔴 TransactionStorage.fetchTransactions ON MAIN THREAD") }
+        return try! dbPool.read { db in
             var sql = "SELECT DISTINCT tx.* FROM \(Transaction.databaseTableName) AS tx"
 
             if joinTokenTransfers {
@@ -231,7 +232,8 @@ extension TransactionStorage: ITransactionStorage {
     }
 
     func pendingTransactions() -> [Transaction] {
-        try! dbPool.read { db in
+        if Thread.isMainThread { print("🔴 TransactionStorage.pendingTransactions ON MAIN THREAD") }
+        return try! dbPool.read { db in
             try Transaction
                 .filter(Transaction.Columns.pending == true)
                 .order(Transaction.Columns.timestamp)
@@ -357,6 +359,19 @@ extension TransactionStorage: ITransactionStorage {
                     .fetchOne(db) ?? MintAccount(address: tokenAcc.mintAddress, decimals: 0)
                 return FullTokenAccount(tokenAccount: tokenAcc, mintAccount: mintAcc)
             }
+        }
+    }
+
+    func fungibleTokenAccounts() -> [TokenAccount] {
+        try! dbPool.read { db in
+            let sql = """
+                SELECT ta.* FROM \(TokenAccount.databaseTableName) AS ta
+                INNER JOIN \(MintAccount.databaseTableName) AS ma
+                    ON ta.\(TokenAccount.Columns.mintAddress.name) = ma.\(MintAccount.Columns.address.name)
+                WHERE CAST(ta.\(TokenAccount.Columns.balance.name) AS REAL) > 0
+                    AND ma.\(MintAccount.Columns.isNft.name) = 0
+            """
+            return try TokenAccount.fetchAll(db, sql: sql)
         }
     }
 

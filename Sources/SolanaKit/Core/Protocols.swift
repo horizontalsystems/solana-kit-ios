@@ -56,6 +56,7 @@ protocol ITransactionStorage {
     func addTokenAccount(_ tokenAccount: TokenAccount) throws
     func fullTokenAccount(mintAddress: String) -> FullTokenAccount?
     func fullTokenAccounts() -> [FullTokenAccount]
+    func fungibleTokenAccounts() -> [TokenAccount]
 
     // MARK: Syncer state
     func lastSyncedTransaction(syncSourceName: String) -> LastSyncedTransaction?
