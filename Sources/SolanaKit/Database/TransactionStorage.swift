@@ -96,6 +96,13 @@ final class TransactionStorage {
             }
         }
 
+        migrator.registerMigration("renameWalletSyncCursor") { db in
+            try db.execute(
+                sql: "UPDATE \(LastSyncedTransaction.databaseTableName) SET \(LastSyncedTransaction.Columns.syncSourceName.name) = ? WHERE \(LastSyncedTransaction.Columns.syncSourceName.name) = ?",
+                arguments: ["rpc/wallet", "rpc/getSignaturesForAddress"]
+            )
+        }
+
         return migrator
     }
 

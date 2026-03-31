@@ -323,23 +323,25 @@ public class Kit {
     ///   - address: Base58-encoded Solana public key for the wallet.
     ///   - rpcSource: RPC endpoint configuration.
     ///   - walletId: Unique identifier used to namespace the GRDB databases on disk.
-    public static func instance(address: String, rpcSource: RpcSource, walletId: String) throws -> Kit {
+    public static func instance(address: String, rpcSource: RpcSource, auth: String?, walletId: String, minLogLevel: Logger.Level = .error) throws -> Kit {
+        let logger = Logger(minLogLevel: minLogLevel)
         let connectionManager = ConnectionManager()
 
         let mainStorage = try MainStorage(walletId: walletId)
         let transactionStorage = try TransactionStorage(walletId: walletId, address: address)
 
-        let networkManager = NetworkManager(logger: nil)
+        let networkManager = NetworkManager(logger: logger)
         let rpcApiProvider = RpcApiProvider(
             networkManager: networkManager,
             url: rpcSource.url,
-            auth: nil
+            auth: auth,
+            logger: logger
         )
 
         let nftClient = NftClient(rpcApiProvider: rpcApiProvider)
 
         // Each service gets its own NetworkManager instance (standard EvmKit pattern).
-        let jupiterApiService = JupiterApiService(networkManager: NetworkManager(logger: nil))
+        let jupiterApiService = JupiterApiService(networkManager: NetworkManager(logger: logger))
 
         let apiSyncer = ApiSyncer(
             rpcApiProvider: rpcApiProvider,
@@ -369,7 +371,25 @@ public class Kit {
         let pendingTransactionSyncer = PendingTransactionSyncer(
             rpcApiProvider: rpcApiProvider,
             storage: transactionStorage,
-            transactionManager: transactionManager
+            transactionManager: transactionManager,
+            logger: logger
+        )
+
+        // Signature providers — pluggable sources for transaction discovery.
+        let walletSignatureProvider = WalletSignatureProvider(
+            address: address,
+            rpcApiProvider: rpcApiProvider,
+            storage: transactionStorage,
+            logger: logger
+        )
+        let tokenAccountSignatureProvider = TokenAccountSignatureProvider(
+            rpcApiProvider: rpcApiProvider,
+            storage: transactionStorage,
+            logger: logger
+        )
+        let signatureProvider = CompositeSignatureProvider(
+            providers: [walletSignatureProvider, tokenAccountSignatureProvider],
+            logger: logger
         )
 
         let transactionSyncer = TransactionSyncer(
@@ -379,7 +399,9 @@ public class Kit {
             storage: transactionStorage,
             transactionManager: transactionManager,
             tokenAccountManager: tokenAccountManager,
-            pendingTransactionSyncer: pendingTransactionSyncer
+            pendingTransactionSyncer: pendingTransactionSyncer,
+            signatureProvider: signatureProvider,
+            logger: logger
         )
 
         // Initialise subjects with persisted values so consumers see correct state
@@ -543,45 +565,31 @@ public class Kit {
 extension Kit: ISyncManagerDelegate {
 
     func didUpdate(balance: Decimal) {
-        DispatchQueue.main.async { [weak self] in
-            self?.balanceSubject.send(balance)
-        }
+        balanceSubject.send(balance)
     }
 
     func didUpdate(balanceSyncState: SyncState) {
-        DispatchQueue.main.async { [weak self] in
-            self?.syncStateSubject.send(balanceSyncState)
-        }
+        syncStateSubject.send(balanceSyncState)
     }
 
     func didUpdate(lastBlockHeight: Int64) {
-        DispatchQueue.main.async { [weak self] in
-            self?.lastBlockHeightSubject.send(lastBlockHeight)
-        }
+        lastBlockHeightSubject.send(lastBlockHeight)
     }
 
     func didUpdate(tokenAccounts: [FullTokenAccount]) {
-        DispatchQueue.main.async { [weak self] in
-            self?.fungibleTokenAccountsSubject.send(tokenAccounts)
-        }
+        fungibleTokenAccountsSubject.send(tokenAccounts)
     }
 
     func didUpdate(tokenBalanceSyncState: SyncState) {
-        DispatchQueue.main.async { [weak self] in
-            self?.tokenBalanceSyncStateSubject.send(tokenBalanceSyncState)
-        }
+        tokenBalanceSyncStateSubject.send(tokenBalanceSyncState)
     }
 
     func didUpdate(transactionsSyncState: SyncState) {
-        DispatchQueue.main.async { [weak self] in
-            self?.transactionsSyncStateSubject.send(transactionsSyncState)
-        }
+        transactionsSyncStateSubject.send(transactionsSyncState)
     }
 
     func didUpdate(transactions: [FullTransaction]) {
-        DispatchQueue.main.async { [weak self] in
-            self?.transactionsSubject.send(transactions)
-        }
+        transactionsSubject.send(transactions)
     }
 }
 
