@@ -110,17 +110,15 @@ class ApiSyncer {
     // MARK: - Private timer helpers
 
     private func startTimer() {
-        stopTimer()
-
-        // Schedule on main RunLoop — matches EvmKit ApiRpcSyncer lines 66-75.
+        // Both invalidate and create must happen in the same main queue block.
+        // Otherwise multiple startTimer() calls queue multiple blocks, each creating
+        // a timer without invalidating the previous — zombie timers that fire forever.
         DispatchQueue.main.async { [weak self, syncInterval] in
+            self?.stopTimer()
             self?.timer = Timer.scheduledTimer(withTimeInterval: syncInterval, repeats: true) { [weak self] _ in
                 self?.onFireTimer()
             }
             self?.timer?.tolerance = 0.5
-
-            // Fire immediately so the first sync doesn't wait for the full interval.
-            // Mirrors Android ApiSyncer's `emit(Unit)` before the delay loop (lines 131-132).
             self?.onFireTimer()
         }
     }
