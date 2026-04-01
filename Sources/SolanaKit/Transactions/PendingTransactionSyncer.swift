@@ -49,17 +49,10 @@ final class PendingTransactionSyncer {
         let pendingTransactions = storage.pendingTransactions()
         guard !pendingTransactions.isEmpty else { return }
 
-        logger?.debug("PendingTxSyncer: \(pendingTransactions.count) pending tx(s)")
-        for tx in pendingTransactions {
-            logger?.debug("PendingTxSyncer:   hash=\(tx.hash), from=\(tx.from ?? "nil"), to=\(tx.to ?? "nil"), amount=\(tx.amount ?? "nil"), lastValidBlockHeight=\(tx.lastValidBlockHeight), retryCount=\(tx.retryCount)")
-        }
-
         let currentBlockHeight: Int64
         do {
             currentBlockHeight = try await rpcApiProvider.getBlockHeight()
-            logger?.debug("PendingTxSyncer: currentBlockHeight=\(currentBlockHeight)")
         } catch {
-            logger?.error("PendingTxSyncer: getBlockHeight failed: \(error)")
             return
         }
 
@@ -70,13 +63,10 @@ final class PendingTransactionSyncer {
 
             do {
                 confirmedResponse = try await rpcApiProvider.getTransaction(signature: pendingTx.hash)
-            } catch {
-                logger?.debug("PendingTxSyncer: getTransaction(\(pendingTx.hash)) failed: \(error)")
-            }
+            } catch {}
 
             if let response = confirmedResponse {
                 let err = response.meta?.err?.description
-                logger?.debug("PendingTxSyncer: CONFIRMED \(pendingTx.hash), error=\(err ?? "none")")
                 updatedTransactions.append(Transaction(
                     hash: pendingTx.hash,
                     timestamp: pendingTx.timestamp,
@@ -92,7 +82,6 @@ final class PendingTransactionSyncer {
                     retryCount: pendingTx.retryCount
                 ))
             } else if currentBlockHeight <= pendingTx.lastValidBlockHeight {
-                logger?.debug("PendingTxSyncer: RESENDING \(pendingTx.hash) (blockHeight \(currentBlockHeight) <= \(pendingTx.lastValidBlockHeight))")
                 await resendTransaction(base64Encoded: pendingTx.base64Encoded)
                 updatedTransactions.append(Transaction(
                     hash: pendingTx.hash,
@@ -109,7 +98,6 @@ final class PendingTransactionSyncer {
                     retryCount: pendingTx.retryCount + 1
                 ))
             } else {
-                logger?.debug("PendingTxSyncer: EXPIRED \(pendingTx.hash) (blockHeight \(currentBlockHeight) > \(pendingTx.lastValidBlockHeight))")
                 updatedTransactions.append(Transaction(
                     hash: pendingTx.hash,
                     timestamp: pendingTx.timestamp,
@@ -129,11 +117,9 @@ final class PendingTransactionSyncer {
 
         guard !updatedTransactions.isEmpty else { return }
 
-        logger?.debug("PendingTxSyncer: updating \(updatedTransactions.count) tx(s)")
         try? storage.updateTransactions(updatedTransactions)
         let hashes = updatedTransactions.map { $0.hash }
         let fullTransactions = storage.fullTransactions(hashes: hashes)
-        logger?.debug("PendingTxSyncer: notifying \(fullTransactions.count) full tx(s)")
         transactionManager.notifyTransactionsUpdate(fullTransactions)
     }
 

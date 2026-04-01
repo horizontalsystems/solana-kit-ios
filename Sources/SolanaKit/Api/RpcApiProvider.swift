@@ -51,7 +51,6 @@ class RpcApiProvider {
     /// Acquires a throttle slot, waits the required delay, returns URL and RPC ID.
     private func nextSlot() async -> (url: URL, rpcId: Int) {
         let (url, rpcId, delay) = await state.acquireSlot(urls: urls)
-        logger?.debug("RpcApiProvider: slot #\(rpcId) → \(url.lastPathComponent), delay: \(String(format: "%.0fms", delay * 1000))")
         if delay > 0 {
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
         }
@@ -171,7 +170,6 @@ extension RpcApiProvider {
                     chunkParsed += 1
                 }
             }
-            logger?.debug("RpcApiProvider: batch chunk \(chunkIndex + 1)/\(chunks.count) — \(chunkParsed)/\(chunk.count) parsed")
         }
 
         return result

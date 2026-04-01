@@ -136,12 +136,10 @@ final class TransactionManager {
         tokenAccounts: [TokenAccount]
     ) -> (tokenAccounts: [TokenAccount], existingMintAddresses: [String]) {
         guard !transactions.isEmpty else {
-            logger?.debug("TransactionManager.handle: no transactions to persist")
             return (tokenAccounts, [])
         }
 
         let hashes = transactions.map { $0.hash }
-        logger?.debug("TransactionManager.handle: processing \(transactions.count) tx(s), \(tokenTransfers.count) transfers, \(mintAccounts.count) mints")
 
         // Fetch existing DB records for the same hashes (for pending → confirmed merging).
         let existingFullByHash: [String: FullTransaction] = {
@@ -160,8 +158,6 @@ final class TransactionManager {
 
         for tx in transactions {
             if let existing = existingFullByHash[tx.hash] {
-                // Merge: prefer synced non-nil from/to/amount, keep existing otherwise.
-                logger?.debug("TransactionManager.handle: merging \(tx.hash) (existing pending=\(existing.transaction.pending), from=\(existing.transaction.from ?? "nil") → \(tx.from ?? "nil"), amount=\(existing.transaction.amount ?? "nil") → \(tx.amount ?? "nil"), transfers: \(existing.tokenTransfers.count) existing)")
                 let merged = Transaction(
                     hash: tx.hash,
                     timestamp: tx.timestamp,
@@ -196,11 +192,6 @@ final class TransactionManager {
 
         // Re-fetch full records to include joined token transfers / mint accounts.
         let saved = storage.fullTransactions(hashes: hashes)
-        logger?.debug("TransactionManager.handle: persisted \(mergedTransactions.count) tx(s), emitting \(saved.count) full tx(s)")
-        for fullTx in saved {
-            logger?.debug("TransactionManager.handle:   tx=\(fullTx.transaction.hash), from=\(fullTx.transaction.from ?? "nil"), to=\(fullTx.transaction.to ?? "nil"), amount=\(fullTx.transaction.amount ?? "nil"), pending=\(fullTx.transaction.pending), tokenTransfers=\(fullTx.tokenTransfers.count)")
-        }
-
         transactionsSubject.send(saved)
 
         return (tokenAccounts, existingMintAddresses)
@@ -451,9 +442,7 @@ final class TransactionManager {
         let base64Tx = txData.base64EncodedString()
 
         // 6. Broadcast.
-        logger?.debug("TransactionManager.sendRawTransaction: broadcasting...")
         let txHash = try await rpcApiProvider.sendTransaction(serializedBase64: base64Tx)
-        logger?.debug("TransactionManager.sendRawTransaction: broadcast OK, hash=\(txHash)")
 
         // 7. Fetch fresh blockhash for lastValidBlockHeight (pending-tx expiry tracking).
         let blockhashResponse = try await rpcApiProvider.getLatestBlockhash()
@@ -479,7 +468,6 @@ final class TransactionManager {
         )
 
         // 10. Persist and emit.
-        logger?.debug("TransactionManager.sendRawTransaction: saving pending tx hash=\(txHash), from=\(address), lastValidBlockHeight=\(blockhashResponse.lastValidBlockHeight)")
         try? storage.save(transactions: [transaction])
         let fullTx = FullTransaction(transaction: transaction, tokenTransfers: [])
         transactionsSubject.send([fullTx])

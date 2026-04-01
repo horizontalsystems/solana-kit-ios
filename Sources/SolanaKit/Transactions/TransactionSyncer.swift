@@ -77,59 +77,36 @@ final class TransactionSyncer {
         // Always poll pending transactions first — even if the main sync is already running.
         await pendingTransactionSyncer.sync()
 
-        guard !syncState.syncing else {
-            logger?.debug("TransactionSyncer: sync already in progress, skipping")
-            return
-        }
+        guard !syncState.syncing else { return }
 
-        logger?.debug("TransactionSyncer: starting sync for \(address)")
         syncState = .syncing(progress: nil)
 
         do {
-            // Step 1: Fetch all new signatures via pluggable provider.
             let signatureInfos = try await signatureProvider.fetchNewSignatures()
-            logger?.debug("TransactionSyncer: fetched \(signatureInfos.count) new signature(s)")
 
             guard !signatureInfos.isEmpty else {
                 try? signatureProvider.commitCursors()
-                logger?.debug("TransactionSyncer: no new signatures, sync complete")
                 syncState = .synced
                 return
             }
 
-            // Step 2: Batch-fetch full transaction responses.
             let signatures = signatureInfos.map { $0.signature }
-            logger?.debug("TransactionSyncer: batch-fetching \(signatures.count) transaction(s)")
             let txResponses = try await rpcApiProvider.fetchTransactionsBatch(signatures: signatures)
-            logger?.debug("TransactionSyncer: received \(txResponses.count) transaction response(s)")
 
-            // Steps 3-4: Parse each transaction.
             var parsedTransactions: [ParsedTransaction] = []
-            var skippedCount = 0
             for signatureInfo in signatureInfos {
-                guard let response = txResponses[signatureInfo.signature] else {
-                    skippedCount += 1
-                    continue
-                }
-                let parsed = parseTransaction(signature: signatureInfo.signature, response: response)
-                parsedTransactions.append(parsed)
+                guard let response = txResponses[signatureInfo.signature] else { continue }
+                parsedTransactions.append(parseTransaction(signature: signatureInfo.signature, response: response))
             }
-            logger?.debug("TransactionSyncer: parsed \(parsedTransactions.count) transaction(s), skipped \(skippedCount) missing response(s)")
 
-            // Step 5-6: Collect placeholder mints from all parsed transactions.
             let allPlaceholders = parsedTransactions.flatMap { $0.mintAccounts }
-
-            // Step 7: Resolve mint metadata for newly seen tokens.
-            logger?.debug("TransactionSyncer: resolving \(allPlaceholders.count) placeholder mint(s)")
             let resolvedNewMints = await resolveMintAccounts(placeholderMints: allPlaceholders)
-            logger?.debug("TransactionSyncer: resolved \(resolvedNewMints.count) new mint account(s)")
             let resolvedMintMap: [String: MintAccount] = {
                 var map: [String: MintAccount] = [:]
                 for mint in resolvedNewMints { map[mint.address] = mint }
                 return map
             }()
 
-            // Step 8: Replace placeholders with resolved versions in each ParsedTransaction.
             let finalParsed = parsedTransactions.map { parsed in
                 ParsedTransaction(
                     transaction: parsed.transaction,
@@ -139,14 +116,11 @@ final class TransactionSyncer {
                 )
             }
 
-            // Step 9: Flatten all records from parsed transactions.
             let allTransactions = finalParsed.map { $0.transaction }
             let allTokenTransfers = finalParsed.flatMap { $0.tokenTransfers }
-            let allMintAccounts = resolvedNewMints   // only new mints; existing ones are in DB
+            let allMintAccounts = resolvedNewMints
             let allTokenAccounts = finalParsed.flatMap { $0.tokenAccounts }
 
-            // Step 10: Persist and emit via TransactionManager.
-            logger?.debug("TransactionSyncer: persisting \(allTransactions.count) tx, \(allTokenTransfers.count) token transfers, \(allMintAccounts.count) mints, \(allTokenAccounts.count) token accounts")
             let (discoveredTokenAccounts, existingMintAddresses) = transactionManager.handle(
                 transactions: allTransactions,
                 tokenTransfers: allTokenTransfers,
@@ -154,27 +128,18 @@ final class TransactionSyncer {
                 tokenAccounts: allTokenAccounts
             )
 
-            // Step 11: Register new token accounts with TokenAccountManager.
             if !discoveredTokenAccounts.isEmpty || !existingMintAddresses.isEmpty {
-                logger?.debug("TransactionSyncer: registering \(discoveredTokenAccounts.count) new token account(s), \(existingMintAddresses.count) existing mint(s)")
                 await tokenAccountManager.addAccount(
                     receivedTokenAccounts: discoveredTokenAccounts,
                     existingMintAddresses: existingMintAddresses
                 )
             }
 
-            // Step 12: Commit provider cursors after successful persist.
-            logger?.debug("TransactionSyncer: committing provider cursors")
             try? signatureProvider.commitCursors()
-
-            logger?.debug("TransactionSyncer: sync completed successfully")
             syncState = .synced
 
         } catch {
-            guard !(error is CancellationError) else {
-                logger?.debug("TransactionSyncer: sync cancelled")
-                return
-            }
+            guard !(error is CancellationError) else { return }
             logger?.error("TransactionSyncer: sync failed: \(error)")
             syncState = .notSynced(error: error)
         }
@@ -365,10 +330,7 @@ final class TransactionSyncer {
         // Collect unique addresses from placeholders, filter to those not already in DB.
         let uniqueAddresses = Array(Set(placeholderMints.map { $0.address }))
         let newAddresses = uniqueAddresses.filter { storage.mintAccount(address: $0) == nil }
-        logger?.debug("TransactionSyncer: resolveMintAccounts — \(uniqueAddresses.count) unique, \(newAddresses.count) new (not in DB)")
-
         guard !newAddresses.isEmpty else {
-            logger?.debug("TransactionSyncer: all mints already in DB, nothing to resolve")
             return []
         }
 
@@ -383,10 +345,7 @@ final class TransactionSyncer {
             }
         }
 
-        // Fetch Metaplex NFT metadata (graceful degradation — mirrors Android's getOrThrow wrapped in try).
-        logger?.debug("TransactionSyncer: fetching Metaplex metadata for \(newAddresses.count) mint(s)")
         let metaplexMap = (try? await nftClient.findAllByMintList(mintAddresses: newAddresses)) ?? [:]
-        logger?.debug("TransactionSyncer: Metaplex returned metadata for \(metaplexMap.count) mint(s)")
 
         var resolvedMints: [MintAccount] = []
 
