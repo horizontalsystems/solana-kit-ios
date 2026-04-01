@@ -2,8 +2,8 @@ import Foundation
 
 /// Configuration for a Solana JSON-RPC endpoint.
 ///
-/// Mirrors the Android `RpcSource` sealed class, simplified to a plain struct since
-/// Swift does not need the sealed-class indirection.
+/// Supports multiple URLs for round-robin key rotation and failover.
+/// Mirrors EvmKit `RpcSource.http(urls:auth:)` pattern.
 public struct RpcSource {
     // MARK: - Nested Types
 
@@ -22,8 +22,8 @@ public struct RpcSource {
     /// Human-readable provider name (e.g. "Alchemy", "QuickNode").
     public let name: String
 
-    /// The JSON-RPC endpoint URL.
-    public let url: URL
+    /// JSON-RPC endpoint URLs. Multiple URLs enable round-robin rotation.
+    public let urls: [URL]
 
     /// The Solana network cluster this endpoint serves.
     public let network: Network
@@ -36,27 +36,39 @@ public struct RpcSource {
         network == .mainnetBeta
     }
 
+    /// First URL — for display and backward compatibility.
+    public var url: URL {
+        urls[0]
+    }
+
     // MARK: - Init
 
-    public init(name: String, url: URL, network: Network, syncInterval: TimeInterval = 30) {
+    public init(name: String, urls: [URL], network: Network, syncInterval: TimeInterval = 30) {
+        precondition(!urls.isEmpty, "RpcSource requires at least one URL")
         self.name = name
-        self.url = url
+        self.urls = urls
         self.network = network
         self.syncInterval = syncInterval
+    }
+
+    /// Convenience init for single URL (backward compatibility).
+    public init(name: String, url: URL, network: Network, syncInterval: TimeInterval = 30) {
+        self.init(name: name, urls: [url], network: network, syncInterval: syncInterval)
     }
 }
 
 // MARK: - Static factory methods
 
 public extension RpcSource {
-    /// Alchemy mainnet-beta endpoint.
+    /// Alchemy mainnet-beta with multiple API keys (round-robin rotation).
+    static func alchemy(apiKeys: [String]) -> RpcSource {
+        let urls = apiKeys.compactMap { URL(string: "https://solana-mainnet.g.alchemy.com/v2/\($0)") }
+        return RpcSource(name: "Alchemy", urls: urls, network: .mainnetBeta, syncInterval: 30)
+    }
+
+    /// Alchemy mainnet-beta with single API key.
     static func alchemy(apiKey: String) -> RpcSource {
-        RpcSource(
-            name: "Alchemy",
-            url: URL(string: "https://solana-mainnet.g.alchemy.com/v2/\(apiKey)")!,
-            network: .mainnetBeta,
-            syncInterval: 30
-        )
+        alchemy(apiKeys: [apiKey])
     }
 
     /// QuickNode mainnet-beta endpoint.

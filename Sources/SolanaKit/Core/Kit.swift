@@ -333,7 +333,7 @@ public class Kit {
         let networkManager = NetworkManager(logger: logger)
         let rpcApiProvider = RpcApiProvider(
             networkManager: networkManager,
-            url: rpcSource.url,
+            urls: rpcSource.urls,
             auth: auth,
             logger: logger
         )
