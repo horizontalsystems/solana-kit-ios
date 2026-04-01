@@ -91,6 +91,7 @@ final class TransactionSyncer {
             logger?.debug("TransactionSyncer: fetched \(signatureInfos.count) new signature(s)")
 
             guard !signatureInfos.isEmpty else {
+                try? signatureProvider.commitCursors()
                 logger?.debug("TransactionSyncer: no new signatures, sync complete")
                 syncState = .synced
                 return
