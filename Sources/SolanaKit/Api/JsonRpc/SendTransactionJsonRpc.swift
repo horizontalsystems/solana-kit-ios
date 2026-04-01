@@ -18,9 +18,6 @@ class SendTransactionJsonRpc: JsonRpc<String> {
                 base64EncodedTransaction,
                 [
                     "encoding": "base64",
-                    "skipPreflight": false,
-                    "preflightCommitment": "confirmed",
-                    "maxRetries": 0,
                 ],
             ]
         )

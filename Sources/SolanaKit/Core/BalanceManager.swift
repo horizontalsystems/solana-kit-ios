@@ -31,14 +31,11 @@ final class BalanceManager {
 
     /// Current sync state of this manager.
     ///
-    /// On every distinct transition the delegate is notified on `DispatchQueue.main`.
+    /// On every distinct transition the delegate is notified.
     private(set) var syncState: SyncState = .notSynced(error: SyncError.notStarted) {
         didSet {
             guard syncState != oldValue else { return }
-            let state = syncState
-            DispatchQueue.main.async { [weak self] in
-                self?.delegate?.didUpdate(balanceSyncState: state)
-            }
+            delegate?.didUpdate(balanceSyncState: syncState)
         }
     }
 
@@ -69,7 +66,6 @@ final class BalanceManager {
     /// `.synced` or `.notSynced(error:)` depending on the outcome.
     func sync() async {
         guard !syncState.syncing else { return }
-
         syncState = .syncing(progress: nil)
 
         do {
@@ -92,10 +88,7 @@ final class BalanceManager {
         if balance != newBalance {
             balance = newBalance
             try? storage.save(balance: lamports)
-            let value = newBalance
-            DispatchQueue.main.async { [weak self] in
-                self?.delegate?.didUpdate(balance: value)
-            }
+            delegate?.didUpdate(balance: newBalance)
         }
 
         // Always transition to synced, even when the value was unchanged.

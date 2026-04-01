@@ -29,14 +29,11 @@ final class TokenAccountManager {
 
     /// Current sync state of this manager.
     ///
-    /// On every distinct transition the delegate is notified on `DispatchQueue.main`.
+    /// On every distinct transition the delegate is notified.
     private(set) var syncState: SyncState = .notSynced(error: SyncError.notStarted) {
         didSet {
             guard syncState != oldValue else { return }
-            let state = syncState
-            DispatchQueue.main.async { [weak self] in
-                self?.delegate?.didUpdate(tokenBalanceSyncState: state)
-            }
+            delegate?.didUpdate(tokenBalanceSyncState: syncState)
         }
     }
 
@@ -65,7 +62,6 @@ final class TokenAccountManager {
     /// `.notSynced(error:)` depending on the outcome.
     func sync() async {
         guard !syncState.syncing else { return }
-
         syncState = .syncing(progress: nil)
 
         do {
@@ -149,10 +145,7 @@ final class TokenAccountManager {
             let fungibleAccounts = allFull.filter { !$0.mintAccount.isNft }
 
             // 7. Notify delegate.
-            let accounts = fungibleAccounts
-            DispatchQueue.main.async { [weak self] in
-                self?.delegate?.didUpdate(tokenAccounts: accounts)
-            }
+            delegate?.didUpdate(tokenAccounts: fungibleAccounts)
 
             // 8. Mark initial sync complete (idempotent).
             if !mainStorage.initialSynced() {

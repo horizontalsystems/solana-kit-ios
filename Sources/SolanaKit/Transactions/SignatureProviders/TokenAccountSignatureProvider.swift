@@ -17,6 +17,9 @@ final class TokenAccountSignatureProvider: ISignatureProvider {
     private let storage: ITransactionStorage
     private let logger: Logger?
 
+    /// Per-ATA cursors staged for commit. Key = cursorName, Value = newest signature.
+    private var pendingCursors: [String: String] = [:]
+
     init(rpcApiProvider: IRpcApiProvider, storage: ITransactionStorage, logger: Logger? = nil) {
         self.rpcApiProvider = rpcApiProvider
         self.storage = storage
@@ -35,6 +38,7 @@ final class TokenAccountSignatureProvider: ISignatureProvider {
         var allSignatures: [SignatureInfo] = []
         var ataSuccessCount = 0
         var ataFailCount = 0
+        pendingCursors = [:]
 
         for account in tokenAccounts {
             let ataAddress = account.address
@@ -67,11 +71,8 @@ final class TokenAccountSignatureProvider: ISignatureProvider {
                 } while true
 
                 if let newestSignature = ataSignatures.first?.signature {
-                    try? storage.save(lastSyncedTransaction: LastSyncedTransaction(
-                        syncSourceName: cursorName,
-                        hash: newestSignature
-                    ))
-                    logger?.debug("TokenAccountSignatureProvider: ATA \(ataAddress) — \(ataSignatures.count) new signature(s), saved cursor \(newestSignature)")
+                    pendingCursors[cursorName] = newestSignature
+                    logger?.debug("TokenAccountSignatureProvider: ATA \(ataAddress) — \(ataSignatures.count) new signature(s), staged cursor \(newestSignature)")
                 }
 
                 allSignatures.append(contentsOf: ataSignatures)
@@ -85,6 +86,18 @@ final class TokenAccountSignatureProvider: ISignatureProvider {
 
         logger?.debug("TokenAccountSignatureProvider: done — \(allSignatures.count) signature(s), \(ataSuccessCount) ATA(s) ok, \(ataFailCount) failed")
         return allSignatures
+    }
+
+    func commitCursors() throws {
+        guard !pendingCursors.isEmpty else { return }
+        for (cursorName, signature) in pendingCursors {
+            try storage.save(lastSyncedTransaction: LastSyncedTransaction(
+                syncSourceName: cursorName,
+                hash: signature
+            ))
+        }
+        logger?.debug("TokenAccountSignatureProvider: committed \(pendingCursors.count) cursor(s)")
+        pendingCursors = [:]
     }
 
     static func cursorName(ataAddress: String) -> String {

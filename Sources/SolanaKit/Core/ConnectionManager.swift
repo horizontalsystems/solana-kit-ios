@@ -35,10 +35,7 @@ extension ConnectionManager: IConnectionManager {
         monitor = NWPathMonitor()
 
         monitor.pathUpdateHandler = { [weak self] path in
-            let connected = path.status == .satisfied
-            DispatchQueue.main.async {
-                self?.isConnected = connected
-            }
+            self?.isConnected = path.status == .satisfied
         }
 
         monitor.start(queue: monitorQueue)

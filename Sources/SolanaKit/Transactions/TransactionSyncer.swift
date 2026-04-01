@@ -162,6 +162,9 @@ final class TransactionSyncer {
                 )
             }
 
+            // Step 12: Commit provider cursors after successful persist.
+            try? signatureProvider.commitCursors()
+
             logger?.debug("TransactionSyncer: sync completed successfully")
             syncState = .synced
 

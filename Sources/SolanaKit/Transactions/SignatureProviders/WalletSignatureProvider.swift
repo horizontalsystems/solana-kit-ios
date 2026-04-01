@@ -13,6 +13,9 @@ final class WalletSignatureProvider: ISignatureProvider {
     private let storage: ITransactionStorage
     private let logger: Logger?
 
+    /// Newest signature from the last fetch — staged for commit.
+    private var pendingCursor: String?
+
     init(address: String, rpcApiProvider: IRpcApiProvider, storage: ITransactionStorage, logger: Logger? = nil) {
         self.address = address
         self.rpcApiProvider = rpcApiProvider
@@ -42,16 +45,20 @@ final class WalletSignatureProvider: ISignatureProvider {
             if chunk.count < pageSize { break }
         } while true
 
-        // Save cursor on success.
-        if let newestSignature = allSignatures.first?.signature {
-            try? storage.save(lastSyncedTransaction: LastSyncedTransaction(
-                syncSourceName: Self.syncSourceName,
-                hash: newestSignature
-            ))
-            logger?.debug("WalletSignatureProvider: saved cursor \(newestSignature)")
-        }
+        // Stage cursor — don't save until commitCursors().
+        pendingCursor = allSignatures.first?.signature
 
         logger?.debug("WalletSignatureProvider: total \(allSignatures.count) signature(s) in \(pageNumber) page(s)")
         return allSignatures
+    }
+
+    func commitCursors() throws {
+        guard let cursor = pendingCursor else { return }
+        try storage.save(lastSyncedTransaction: LastSyncedTransaction(
+            syncSourceName: Self.syncSourceName,
+            hash: cursor
+        ))
+        logger?.debug("WalletSignatureProvider: committed cursor \(cursor)")
+        pendingCursor = nil
     }
 }

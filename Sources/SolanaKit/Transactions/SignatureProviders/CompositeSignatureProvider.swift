@@ -34,4 +34,10 @@ final class CompositeSignatureProvider: ISignatureProvider {
         logger?.debug("CompositeSignatureProvider: \(unique.count) unique signature(s) from \(providers.count) provider(s)")
         return unique
     }
+
+    func commitCursors() throws {
+        for provider in providers {
+            try provider.commitCursors()
+        }
+    }
 }

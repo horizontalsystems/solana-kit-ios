@@ -2,11 +2,15 @@ import Foundation
 
 /// Abstraction for fetching new transaction signatures.
 ///
-/// Implementations can use Solana RPC `getSignaturesForAddress`, Helius DAS API,
-/// or any other indexer. Each provider fully owns its sync cursors —
-/// reads them at fetch start, writes them at fetch end.
+/// Two-phase commit: `fetchNewSignatures()` returns data without advancing cursors,
+/// `commitCursors()` is called only after the caller successfully processes the data.
+/// This prevents cursor advancement on transient failures (network, parsing).
 protocol ISignatureProvider {
     /// Fetches all new signatures since the provider's last saved cursor.
-    /// On success, the provider saves its cursor(s) internally before returning.
+    /// Does NOT advance cursors — call `commitCursors()` after successful processing.
     func fetchNewSignatures() async throws -> [SignatureInfo]
+
+    /// Advances cursors to the newest signatures returned by the last `fetchNewSignatures()`.
+    /// Call only after the returned signatures have been successfully persisted.
+    func commitCursors() throws
 }

@@ -192,9 +192,7 @@ final class TransactionManager {
         // Re-fetch full records to include joined token transfers / mint accounts.
         let saved = storage.fullTransactions(hashes: hashes)
 
-        DispatchQueue.main.async { [weak self] in
-            self?.transactionsSubject.send(saved)
-        }
+        transactionsSubject.send(saved)
 
         return (tokenAccounts, existingMintAddresses)
     }
@@ -206,9 +204,7 @@ final class TransactionManager {
     /// Called by `PendingTransactionSyncer` after updating pending transactions in storage.
     /// Mirrors Android `TransactionManager.notifyTransactionsUpdate()` (lines 111–113).
     func notifyTransactionsUpdate(_ transactions: [FullTransaction]) {
-        DispatchQueue.main.async { [weak self] in
-            self?.transactionsSubject.send(transactions)
-        }
+        transactionsSubject.send(transactions)
     }
 
     // MARK: - Read queries
@@ -282,9 +278,7 @@ final class TransactionManager {
         // 8. Persist and emit.
         try? storage.save(transactions: [transaction])
         let fullTx = FullTransaction(transaction: transaction, tokenTransfers: [])
-        DispatchQueue.main.async { [weak self] in
-            self?.transactionsSubject.send([fullTx])
-        }
+        transactionsSubject.send([fullTx])
         return fullTx
     }
 
@@ -397,10 +391,7 @@ final class TransactionManager {
             ?? MintAccount(address: mintAddress, decimals: senderFullTokenAccount.tokenAccount.decimals)
         let fullTokenTransfer = FullTokenTransfer(tokenTransfer: tokenTransfer, mintAccount: mintAccount)
         let fullTx = FullTransaction(transaction: transaction, tokenTransfers: [fullTokenTransfer])
-
-        DispatchQueue.main.async { [weak self] in
-            self?.transactionsSubject.send([fullTx])
-        }
+        transactionsSubject.send([fullTx])
         return fullTx
     }
 
@@ -479,9 +470,7 @@ final class TransactionManager {
         // 10. Persist and emit.
         try? storage.save(transactions: [transaction])
         let fullTx = FullTransaction(transaction: transaction, tokenTransfers: [])
-        DispatchQueue.main.async { [weak self] in
-            self?.transactionsSubject.send([fullTx])
-        }
+        transactionsSubject.send([fullTx])
 
         // 11. Return.
         return fullTx

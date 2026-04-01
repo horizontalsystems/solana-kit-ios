@@ -6,12 +6,14 @@ class RpcApiProvider {
     private let networkManager: NetworkManager
     private let url: URL
     private let headers: HTTPHeaders
+    private let logger: Logger?
 
     private var currentRpcId = 0
 
-    init(networkManager: NetworkManager, url: URL, auth: String?) {
+    init(networkManager: NetworkManager, url: URL, auth: String?, logger: Logger? = nil) {
         self.networkManager = networkManager
         self.url = url
+        self.logger = logger
 
         var headers = HTTPHeaders()
 
@@ -91,9 +93,16 @@ extension RpcApiProvider: IRpcApiProvider {
                 let id = dict["id"] as? Int,
                 id >= 0, id < rpcs.count,
                 let rpcResponse = JsonRpcResponse.response(jsonObject: dict)
-            else { continue }
+            else {
+                logger?.warning("RpcApiProvider: batch response — invalid id or structure: \(dict["id"] ?? "nil")")
+                continue
+            }
 
-            results[id] = try? rpcs[id].parse(response: rpcResponse)
+            do {
+                results[id] = try rpcs[id].parse(response: rpcResponse)
+            } catch {
+                logger?.error("RpcApiProvider: batch parse failed for id \(id): \(error)")
+            }
         }
         return results
     }
@@ -114,14 +123,17 @@ extension RpcApiProvider {
         var result: [String: RpcTransactionResponse] = [:]
 
         let chunks = signatures.chunked(into: batchChunkSize)
-        for chunk in chunks {
+        for (chunkIndex, chunk) in chunks.enumerated() {
             let rpcs = chunk.map { GetTransactionJsonRpc(signature: $0) }
             let responses: [RpcTransactionResponse??] = try await fetchBatch(rpcs: rpcs)
+            var chunkParsed = 0
             for (signature, maybeResponse) in zip(chunk, responses) {
                 if let outerOpt = maybeResponse, let tx = outerOpt {
                     result[signature] = tx
+                    chunkParsed += 1
                 }
             }
+            logger?.debug("RpcApiProvider: batch chunk \(chunkIndex + 1)/\(chunks.count) — \(chunkParsed)/\(chunk.count) transactions parsed")
         }
 
         return result
