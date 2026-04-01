@@ -163,6 +163,7 @@ final class TransactionSyncer {
             }
 
             // Step 12: Commit provider cursors after successful persist.
+            logger?.debug("TransactionSyncer: committing provider cursors")
             try? signatureProvider.commitCursors()
 
             logger?.debug("TransactionSyncer: sync completed successfully")

@@ -366,7 +366,7 @@ public class Kit {
             mainStorage: mainStorage
         )
 
-        let transactionManager = TransactionManager(address: address, storage: transactionStorage, rpcApiProvider: rpcApiProvider)
+        let transactionManager = TransactionManager(address: address, storage: transactionStorage, rpcApiProvider: rpcApiProvider, logger: logger)
 
         let pendingTransactionSyncer = PendingTransactionSyncer(
             rpcApiProvider: rpcApiProvider,
