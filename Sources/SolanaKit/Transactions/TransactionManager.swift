@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import HsToolKit
 
 /// Aggregates parsed transactions, handles pending-to-confirmed merging,
 /// persists to storage, and emits Combine events.
