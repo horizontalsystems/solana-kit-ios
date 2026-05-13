@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import GRDB
+import HsCryptoKit
 
 /// A 32-byte Solana public key (Ed25519).
 ///
@@ -114,17 +115,8 @@ extension PublicKey {
         return try PublicKey(data: hashBytes)
     }
 
-    /// Returns `true` when `bytes` encodes a valid compressed Ed25519 point.
-    ///
-    /// `Curve25519.Signing.PublicKey(rawRepresentation:)` calls BoringSSL's
-    /// `ED25519_check_public_key`, which decompresses the Edwards25519 point and
-    /// validates it is on the curve. It throws for invalid points, not only for
-    /// wrong-length inputs. Verified against the known Metaplex metadata PDA for
-    /// the USDC mint (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`), which
-    /// correctly derives to `2uMBJkes3jHP73XNFQ5iKiX3MoDaKo5RsYfLjETyDox`.
     private static func isOnEd25519Curve(_ bytes: Data) -> Bool {
-        guard bytes.count == 32 else { return false }
-        return (try? Curve25519.Signing.PublicKey(rawRepresentation: bytes)) != nil
+        Crypto.Ed25519.isOnCurve(publicKeyData: bytes)
     }
 
     enum PDAError: Swift.Error {

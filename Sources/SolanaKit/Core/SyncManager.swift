@@ -30,6 +30,7 @@ class SyncManager {
     // MARK: - Private state
 
     private var started: Bool = false
+    private var pendingNotReadyWorkItem: DispatchWorkItem?
     private var transactionManagerCancellable: AnyCancellable?
 
     // MARK: - Convenience computed accessors
@@ -93,6 +94,7 @@ class SyncManager {
     /// Mirrors Android `SyncManager.stop()` (lines 49–55).
     func stop() {
         started = false
+        cancelPendingNotReady()
         apiSyncer.stop()
         balanceManager.stop()
         tokenAccountManager.stop()
@@ -149,14 +151,14 @@ extension SyncManager: IApiSyncerDelegate {
     func didUpdateSyncerState(_ state: SyncerState) {
         switch state {
         case .ready:
+            cancelPendingNotReady()
             // Sync is triggered by block height ticks, not state changes.
             break
         case .preparing:
             break
         case .notReady(let error):
-            balanceManager.stop(error: error)
-            tokenAccountManager.stop(error: error)
-            transactionSyncer.stop(error: error)
+            guard started else { return }
+            scheduleNotReady(error: error)
         }
     }
 
@@ -165,12 +167,38 @@ extension SyncManager: IApiSyncerDelegate {
     /// This is the primary heartbeat that drives all downstream data fetches.
     /// Mirrors Android `SyncManager.didUpdateLastBlockHeight` (lines 123-130).
     func didUpdateLastBlockHeight(_ lastBlockHeight: Int64) {
+        cancelPendingNotReady()
         delegate?.didUpdate(lastBlockHeight: lastBlockHeight)
         Task { [weak self] in
             await self?.balanceManager.sync()
             await self?.tokenAccountManager.sync()
             await self?.transactionSyncer.sync()
         }
+    }
+}
+
+private extension SyncManager {
+    static let notReadyDelay: TimeInterval = 2
+
+    func scheduleNotReady(error: Error) {
+        cancelPendingNotReady()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.started else { return }
+
+            self.balanceManager.stop(error: error)
+            self.tokenAccountManager.stop(error: error)
+            self.transactionSyncer.stop(error: error)
+            self.pendingNotReadyWorkItem = nil
+        }
+
+        pendingNotReadyWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.notReadyDelay, execute: workItem)
+    }
+
+    func cancelPendingNotReady() {
+        pendingNotReadyWorkItem?.cancel()
+        pendingNotReadyWorkItem = nil
     }
 }
 
