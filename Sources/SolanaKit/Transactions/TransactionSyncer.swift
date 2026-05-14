@@ -3,7 +3,6 @@ import HsToolKit
 
 /// Fetches, parses, and persists the transaction history for a single wallet address.
 final class TransactionSyncer {
-
     // MARK: - Dependencies
 
     private let address: String
@@ -103,7 +102,9 @@ final class TransactionSyncer {
             let resolvedNewMints = await resolveMintAccounts(placeholderMints: allPlaceholders)
             let resolvedMintMap: [String: MintAccount] = {
                 var map: [String: MintAccount] = [:]
-                for mint in resolvedNewMints { map[mint.address] = mint }
+                for mint in resolvedNewMints {
+                    map[mint.address] = mint
+                }
                 return map
             }()
 
@@ -168,7 +169,8 @@ final class TransactionSyncer {
         if let meta = meta,
            ourIndex >= 0,
            ourIndex < meta.preBalances.count,
-           ourIndex < meta.postBalances.count {
+           ourIndex < meta.postBalances.count
+        {
             let balanceChange = meta.postBalances[ourIndex] - meta.preBalances[ourIndex]
             // Fee payer (index 0) pays the fee: add it back to get the net transfer amount.
             let adjustedChange = ourIndex == 0 ? balanceChange + fee : balanceChange
@@ -201,6 +203,9 @@ final class TransactionSyncer {
         var tokenTransfers: [TokenTransfer] = []
         var mintAccounts: [MintAccount] = []
         var tokenAccounts: [TokenAccount] = []
+        // mint -> (senderWallet, receiverWallet) among non-our entries, used to infer from/to
+        // for SPL-only transactions. Matches Android `mintCounterparties`.
+        var mintCounterparties: [String: (sender: String?, receiver: String?)] = [:]
 
         if let meta = meta {
             // Build lookup maps keyed by "<accountIndex>_<mint>".
@@ -219,17 +224,27 @@ final class TransactionSyncer {
                 let postBalance = postByKey[key]
                 let preBalance = preByKey[key]
 
-                // Only process token accounts owned by our address.
-                let owner = postBalance?.owner ?? preBalance?.owner
-                guard owner == address else { continue }
-
+                guard let owner = postBalance?.owner ?? preBalance?.owner else { continue }
                 guard let mint = postBalance?.mint ?? preBalance?.mint else { continue }
-
-                let decimals = postBalance?.uiTokenAmount?.decimals ?? preBalance?.uiTokenAmount?.decimals ?? 0
 
                 let postAmount = Decimal(string: postBalance?.uiTokenAmount?.amount ?? "0") ?? 0
                 let preAmount = Decimal(string: preBalance?.uiTokenAmount?.amount ?? "0") ?? 0
                 let change = postAmount - preAmount
+
+                if owner != address {
+                    // Track counterparty for from/to inference:
+                    // owner whose balance decreased = sender; whose balance increased = receiver.
+                    if change < 0 {
+                        let current = mintCounterparties[mint] ?? (nil, nil)
+                        mintCounterparties[mint] = (sender: owner, receiver: current.receiver)
+                    } else if change > 0 {
+                        let current = mintCounterparties[mint] ?? (nil, nil)
+                        mintCounterparties[mint] = (sender: current.sender, receiver: owner)
+                    }
+                    continue
+                }
+
+                let decimals = postBalance?.uiTokenAmount?.decimals ?? preBalance?.uiTokenAmount?.decimals ?? 0
 
                 // Skip zero-change entries.
                 guard change != 0 else { continue }
@@ -256,6 +271,19 @@ final class TransactionSyncer {
                         balance: "0",
                         decimals: decimals
                     ))
+                }
+            }
+
+            // Infer from/to for SPL-only transactions (no SOL counterparty detected).
+            // Matches Android: only runs when the SOL balance heuristic produced no result.
+            if solFrom == nil, solTo == nil, let primary = tokenTransfers.first {
+                let counterparty = mintCounterparties[primary.mintAddress]
+                if primary.incoming {
+                    solFrom = counterparty?.sender
+                    solTo = address
+                } else {
+                    solFrom = address
+                    solTo = counterparty?.receiver
                 }
             }
         }
@@ -302,10 +330,10 @@ final class TransactionSyncer {
             if i == ourIndex { continue }
             if i >= preBalances.count || i >= postBalances.count { continue }
             let change = postBalances[i] - preBalances[i]
-            if incoming && change < bestChange {
+            if incoming, change < bestChange {
                 bestChange = change
                 bestIndex = i
-            } else if !incoming && change > bestChange {
+            } else if !incoming, change > bestChange {
                 bestChange = change
                 bestIndex = i
             }
@@ -352,7 +380,8 @@ final class TransactionSyncer {
         for (index, mintAddress) in newAddresses.enumerated() {
             guard index < bufferInfos.count,
                   let bufferInfo = bufferInfos[index],
-                  let layout = try? SplMintLayout(data: bufferInfo.data) else {
+                  let layout = try? SplMintLayout(data: bufferInfo.data)
+            else {
                 // Fallback: keep placeholder with decimals from parsed token balance.
                 if let placeholder = placeholderMints.first(where: { $0.address == mintAddress }) {
                     resolvedMints.append(placeholder)
@@ -366,7 +395,7 @@ final class TransactionSyncer {
             let isNft: Bool
             if layout.decimals != 0 {
                 isNft = false
-            } else if layout.supply == 1 && layout.mintAuthority == nil {
+            } else if layout.supply == 1, layout.mintAuthority == nil {
                 isNft = true
             } else if metadataAccount?.tokenStandard == .nonFungible {
                 isNft = true

@@ -11,7 +11,6 @@ import HsToolKit
 ///
 /// Mirrors Android `TransactionManager.handle()` (lines 67–108).
 final class TransactionManager {
-
     // MARK: - Dependencies
 
     private let address: String
@@ -84,7 +83,7 @@ final class TransactionManager {
                 guard let self = self else { return [] }
                 return transactions.filter { tx in
                     self.hasSolTransfer(tx, incoming: incoming) ||
-                    tx.tokenTransfers.contains { $0.tokenTransfer.incoming == incoming }
+                        tx.tokenTransfers.contains { $0.tokenTransfer.incoming == incoming }
                 }
             }
             .filter { !$0.isEmpty }
@@ -177,7 +176,7 @@ final class TransactionManager {
                 // If synced has no token transfers but DB has some, collect their mint
                 // addresses for re-resolution. Mirrors Android lines 91–97.
                 let syncedTransfers = syncedTransfersByHash[tx.hash] ?? []
-                if syncedTransfers.isEmpty && !existing.tokenTransfers.isEmpty {
+                if syncedTransfers.isEmpty, !existing.tokenTransfers.isEmpty {
                     existingMintAddresses.append(contentsOf: existing.tokenTransfers.map { $0.mintAccount.address })
                 }
             } else {
@@ -369,6 +368,8 @@ final class TransactionManager {
             hash: txHash,
             timestamp: Int64(Date().timeIntervalSince1970),
             fee: "\(Kit.fee)",
+            from: address,
+            to: toAddress,
             pending: true,
             blockHash: blockhashResponse.blockhash,
             lastValidBlockHeight: blockhashResponse.lastValidBlockHeight,
