@@ -170,7 +170,8 @@ final class TransactionStorage {
             var args: [DatabaseValueConvertible] = []
 
             if let fromHash = fromHash,
-               let fromTx = try Transaction.filter(Transaction.Columns.hash == fromHash).fetchOne(db) {
+               let fromTx = try Transaction.filter(Transaction.Columns.hash == fromHash).fetchOne(db)
+            {
                 conditions.append("(tx.\(Transaction.Columns.timestamp.name) < ? OR (tx.\(Transaction.Columns.timestamp.name) = ? AND tx.\(Transaction.Columns.hash.name) < ?))")
                 args.append(fromTx.timestamp)
                 args.append(fromTx.timestamp)
@@ -220,7 +221,6 @@ final class TransactionStorage {
 // MARK: - ITransactionStorage
 
 extension TransactionStorage: ITransactionStorage {
-
     // MARK: Transaction CRUD
 
     func save(transactions: [Transaction]) throws {
@@ -267,8 +267,15 @@ extension TransactionStorage: ITransactionStorage {
 
     func save(tokenTransfers: [TokenTransfer]) throws {
         try dbPool.write { db in
-            for tokenTransfer in tokenTransfers {
-                try tokenTransfer.save(db)
+            let transfersByHash = Dictionary(grouping: tokenTransfers, by: { $0.transactionHash })
+            for (hash, transfers) in transfersByHash {
+                let alreadyExists = try TokenTransfer
+                    .filter(TokenTransfer.Columns.transactionHash == hash)
+                    .fetchCount(db) > 0
+                if alreadyExists { continue }
+                for transfer in transfers {
+                    try transfer.save(db)
+                }
             }
         }
     }
