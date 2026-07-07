@@ -56,8 +56,10 @@ enum SolanaSerializer {
         /// All unique account keys in canonical order:
         /// writable-signers, readonly-signers, writable-non-signers, readonly-non-signers.
         let accountKeys: [PublicKey]
-        /// Raw 32-byte blockhash (already decoded from Base58).
-        let recentBlockhash: Data
+        /// Raw 32-byte blockhash (already decoded from Base58). Mutable so an unsigned
+        /// transaction's blockhash can be refreshed right before signing (see
+        /// `TransactionManager.sendRawTransaction` — quote-time blockhashes expire in ~60-90s).
+        var recentBlockhash: Data
         let instructions: [CompiledInstruction]
         /// Message format version. `.legacy` for all compile-generated messages.
         let version: MessageVersion

@@ -79,7 +79,8 @@ final class PendingTransactionSyncer {
                     blockHash: pendingTx.blockHash,
                     lastValidBlockHeight: pendingTx.lastValidBlockHeight,
                     base64Encoded: pendingTx.base64Encoded,
-                    retryCount: pendingTx.retryCount
+                    retryCount: pendingTx.retryCount,
+                    programIds: pendingTx.programIds
                 ))
             } else if currentBlockHeight <= pendingTx.lastValidBlockHeight {
                 await resendTransaction(base64Encoded: pendingTx.base64Encoded)
@@ -95,7 +96,8 @@ final class PendingTransactionSyncer {
                     blockHash: pendingTx.blockHash,
                     lastValidBlockHeight: pendingTx.lastValidBlockHeight,
                     base64Encoded: pendingTx.base64Encoded,
-                    retryCount: pendingTx.retryCount + 1
+                    retryCount: pendingTx.retryCount + 1,
+                    programIds: pendingTx.programIds
                 ))
             } else {
                 updatedTransactions.append(Transaction(
@@ -110,7 +112,8 @@ final class PendingTransactionSyncer {
                     blockHash: pendingTx.blockHash,
                     lastValidBlockHeight: pendingTx.lastValidBlockHeight,
                     base64Encoded: pendingTx.base64Encoded,
-                    retryCount: pendingTx.retryCount
+                    retryCount: pendingTx.retryCount,
+                    programIds: pendingTx.programIds
                 ))
             }
         }

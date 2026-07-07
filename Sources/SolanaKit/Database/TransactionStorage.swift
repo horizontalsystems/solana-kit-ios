@@ -103,6 +103,12 @@ final class TransactionStorage {
             )
         }
 
+        migrator.registerMigration("addProgramIdsToTransactions") { db in
+            try db.alter(table: Transaction.databaseTableName) { t in
+                t.add(column: Transaction.Columns.programIds.name, .text)
+            }
+        }
+
         return migrator
     }
 
@@ -226,6 +232,19 @@ extension TransactionStorage: ITransactionStorage {
     func save(transactions: [Transaction]) throws {
         try dbPool.write { db in
             for transaction in transactions {
+                // The REPLACE conflict policy makes every save a full-row rewrite, so a writer
+                // that doesn't carry `programIds` (or a fetch path where it can't be derived)
+                // would silently null an existing tag and un-label a classified swap. The tag is
+                // immutable once known — a transaction's invoked programs never change — so
+                // backfill it from the stored row whenever the incoming one lacks it.
+                if transaction.programIds == nil,
+                   let existing = try Transaction
+                   .filter(Transaction.Columns.hash == transaction.hash)
+                   .fetchOne(db),
+                   let existingProgramIds = existing.programIds
+                {
+                    transaction.programIds = existingProgramIds
+                }
                 try transaction.save(db)
             }
         }

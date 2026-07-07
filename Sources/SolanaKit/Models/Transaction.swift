@@ -31,6 +31,10 @@ public class Transaction: Record {
     public var base64Encoded: String
     /// Number of times this pending transaction has been re-broadcast.
     public var retryCount: Int
+    /// Space-separated RECOGNIZED program ids this transaction invoked (see `KnownPrograms`), e.g.
+    /// the Jupiter aggregator — lets clients classify swaps ("Swapped via Jupiter") instead of
+    /// rendering an unknown multi-transfer transaction. `nil` when none were recognized.
+    public var programIds: String?
 
     /// Transaction fee as `Decimal`, or `nil` if `fee` is not set.
     public var decimalFee: Decimal? {
@@ -56,7 +60,8 @@ public class Transaction: Record {
         blockHash: String = "",
         lastValidBlockHeight: Int64 = 0,
         base64Encoded: String = "",
-        retryCount: Int = 0
+        retryCount: Int = 0,
+        programIds: String? = nil
     ) {
         self.hash = hash
         self.timestamp = timestamp
@@ -70,6 +75,7 @@ public class Transaction: Record {
         self.lastValidBlockHeight = lastValidBlockHeight
         self.base64Encoded = base64Encoded
         self.retryCount = retryCount
+        self.programIds = programIds
         super.init()
     }
 
@@ -95,6 +101,7 @@ public class Transaction: Record {
         case lastValidBlockHeight
         case base64Encoded
         case retryCount
+        case programIds
     }
 
     public required init(row: Row) throws {
@@ -110,6 +117,7 @@ public class Transaction: Record {
         lastValidBlockHeight = row[Columns.lastValidBlockHeight]
         base64Encoded = row[Columns.base64Encoded]
         retryCount = row[Columns.retryCount]
+        programIds = row[Columns.programIds]
         try super.init(row: row)
     }
 
@@ -126,5 +134,6 @@ public class Transaction: Record {
         container[Columns.lastValidBlockHeight] = lastValidBlockHeight
         container[Columns.base64Encoded] = base64Encoded
         container[Columns.retryCount] = retryCount
+        container[Columns.programIds] = programIds
     }
 }

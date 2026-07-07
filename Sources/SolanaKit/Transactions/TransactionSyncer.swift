@@ -298,7 +298,11 @@ final class TransactionSyncer {
             to: solTo,
             amount: amountString,
             error: errorString,
-            pending: false
+            pending: false,
+            // Program ids always live in the static account keys (the runtime forbids loading
+            // programs from lookup tables), so intersecting accountKeys with the allowlist is a
+            // reliable "did this tx touch a known DEX" signal (e.g. Jupiter → render as a swap).
+            programIds: KnownPrograms.recognized(in: accountKeys)
         )
 
         logger?.verbose("TransactionSyncer: tx \(signature) — fee: \(feeString), SOL from: \(solFrom ?? "nil") to: \(solTo ?? "nil"), amount: \(amountString ?? "nil"), tokenTransfers: \(tokenTransfers.count), error: \(errorString ?? "none")")

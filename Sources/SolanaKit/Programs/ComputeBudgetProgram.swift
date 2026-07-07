@@ -79,7 +79,10 @@ enum ComputeBudgetProgram {
             else { continue }
 
             let limitBytes = ix.data[ix.data.startIndex + 1 ..< ix.data.startIndex + 5]
-            return limitBytes.withUnsafeBytes { $0.load(as: UInt32.self).littleEndian }
+            // The value starts 1 byte after the discriminator, so this slice is (almost) never
+            // aligned for a UInt32 — `load(as:)` traps ("load from misaligned raw pointer").
+            // `loadUnaligned` is the correct read for wire data (cf. Data+ReadLE).
+            return limitBytes.withUnsafeBytes { UInt32(littleEndian: $0.loadUnaligned(as: UInt32.self)) }
         }
         return nil
     }
@@ -97,7 +100,9 @@ enum ComputeBudgetProgram {
             else { continue }
 
             let priceBytes = ix.data[ix.data.startIndex + 1 ..< ix.data.startIndex + 9]
-            return priceBytes.withUnsafeBytes { $0.load(as: UInt64.self).littleEndian }
+            // Same misalignment hazard as parseComputeUnitLimit above — the +1 offset slice
+            // must be read with `loadUnaligned`, never `load(as:)`.
+            return priceBytes.withUnsafeBytes { UInt64(littleEndian: $0.loadUnaligned(as: UInt64.self)) }
         }
         return nil
     }

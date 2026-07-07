@@ -406,12 +406,14 @@ final class TransactionManager {
     ///
     /// Steps mirror Android `SolanaKit.sendRawTransaction()`:
     /// 1. Deserialize raw bytes → `(signatures, message)`.
+    ///    1b. Refresh `recentBlockhash` pre-signing (single-signer txs only) — quote-time
+    ///        blockhashes expire in ~60-90s and would fail broadcast with "Blockhash not found".
     /// 2. Re-serialize message bytes (includes `0x80` prefix for V0, per `serialize(message:)`).
     /// 3. Sign message bytes with `signer`.
     /// 4. Replace the fee-payer signature slot (index 0) with the new signature.
     /// 5. Re-serialize the full transaction and base64-encode.
     /// 6. Broadcast via `sendTransaction`.
-    /// 7. Fetch fresh blockhash for `lastValidBlockHeight` (pending-tx expiry tracking).
+    /// 7. Reuse the step-1b blockhash response for `lastValidBlockHeight` (pending-tx expiry tracking).
     /// 8. Estimate fee from ComputeBudget instructions.
     /// 9. Persist a pending `Transaction` record and emit via `transactionsSubject`.
     ///
@@ -423,6 +425,18 @@ final class TransactionManager {
     func sendRawTransaction(rawTransaction: Data, signer: Signer) async throws -> FullTransaction {
         // 1. Deserialize.
         var (signatures, message) = try SolanaSerializer.deserialize(transactionData: rawTransaction)
+
+        // 1b. Refresh the recent blockhash just before signing. Transactions built at quote time
+        //     (e.g. server-assembled Jupiter swaps) routinely outlive their embedded blockhash
+        //     (~60-90s) while the user reviews the confirmation screen — broadcasting then fails
+        //     with "Blockhash not found". Replacing it is only safe while nobody else has signed
+        //     (a co-signature covers the old bytes), so limit to single-signer transactions.
+        //     The response is reused below for `lastValidBlockHeight`, which then describes the
+        //     blockhash actually embedded in the broadcast transaction.
+        let blockhashResponse = try await rpcApiProvider.getLatestBlockhash()
+        if signatures.count <= 1, let fresh = try? Base58.decode(blockhashResponse.blockhash), fresh.count == 32 {
+            message.recentBlockhash = fresh
+        }
 
         // 2. Re-serialize the message bytes — this is the data that must be signed.
         //    For V0 messages `serialize(message:)` prepends 0x80, matching the wire format.
@@ -445,14 +459,21 @@ final class TransactionManager {
         // 6. Broadcast.
         let txHash = try await rpcApiProvider.sendTransaction(serializedBase64: base64Tx)
 
-        // 7. Fetch fresh blockhash for lastValidBlockHeight (pending-tx expiry tracking).
-        let blockhashResponse = try await rpcApiProvider.getLatestBlockhash()
+        // 7. `blockhashResponse` was fetched in step 1b, pre-signing — its `lastValidBlockHeight`
+        //    matches the blockhash actually embedded in the transaction.
 
         // 8. Estimate fee from ComputeBudget instructions.
         let feeSol = ComputeBudgetProgram.calculateFee(from: message, baseFeeLamports: Kit.baseFeeLamports)
 
         // 9. Construct pending Transaction record.
         //    blockHash comes from the message itself; lastValidBlockHeight from the fresh poll.
+        //    programIds: exact program ids from the compiled instructions (programs are always
+        //    static account keys), filtered to the recognized set — lets clients render e.g. a
+        //    Jupiter interaction as a swap while it is still pending.
+        let invokedPrograms = message.instructions.compactMap { ix -> String? in
+            let index = Int(ix.programIdIndex)
+            return index < message.accountKeys.count ? message.accountKeys[index].base58 : nil
+        }
         let blockHashString = Base58.encode(message.recentBlockhash)
         let transaction = Transaction(
             hash: txHash,
@@ -465,7 +486,8 @@ final class TransactionManager {
             blockHash: blockHashString,
             lastValidBlockHeight: blockhashResponse.lastValidBlockHeight,
             base64Encoded: base64Tx,
-            retryCount: 0
+            retryCount: 0,
+            programIds: KnownPrograms.recognized(in: invokedPrograms)
         )
 
         // 10. Persist and emit.
