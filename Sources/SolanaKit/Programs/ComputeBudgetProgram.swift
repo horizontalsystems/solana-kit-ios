@@ -78,11 +78,11 @@ enum ComputeBudgetProgram {
                   ix.data[ix.data.startIndex] == 0x02
             else { continue }
 
-            let limitBytes = ix.data[ix.data.startIndex + 1 ..< ix.data.startIndex + 5]
-            // The value starts 1 byte after the discriminator, so this slice is (almost) never
-            // aligned for a UInt32 — `load(as:)` traps ("load from misaligned raw pointer").
-            // `loadUnaligned` is the correct read for wire data (cf. Data+ReadLE).
-            return limitBytes.withUnsafeBytes { UInt32(littleEndian: $0.loadUnaligned(as: UInt32.self)) }
+            // The value starts 1 byte after the discriminator — an offset that is (almost) never
+            // aligned, so it must be read with the unaligned-safe helper, never `load(as:)`
+            // (which traps: "load from misaligned raw pointer"). `readLE`'s offset is in the
+            // receiver's own index space, which for a Data slice is the original (absolute) one.
+            return ix.data.readLE(offset: ix.data.startIndex + 1)
         }
         return nil
     }
@@ -99,10 +99,8 @@ enum ComputeBudgetProgram {
                   ix.data[ix.data.startIndex] == 0x03
             else { continue }
 
-            let priceBytes = ix.data[ix.data.startIndex + 1 ..< ix.data.startIndex + 9]
-            // Same misalignment hazard as parseComputeUnitLimit above — the +1 offset slice
-            // must be read with `loadUnaligned`, never `load(as:)`.
-            return priceBytes.withUnsafeBytes { UInt64(littleEndian: $0.loadUnaligned(as: UInt64.self)) }
+            // Same misalignment hazard as parseComputeUnitLimit above — read via `readLE`.
+            return ix.data.readLE(offset: ix.data.startIndex + 1)
         }
         return nil
     }

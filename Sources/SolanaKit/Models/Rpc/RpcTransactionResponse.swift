@@ -82,9 +82,10 @@ struct RpcTransactionDetail: Decodable {
     let message: RpcTransactionMessage?
 }
 
-/// The `message` inside `transaction` — contains the list of account keys.
+/// The `message` inside `transaction` — contains the list of account keys and instructions.
 struct RpcTransactionMessage: Decodable {
     let accountKeys: [RpcAccountKey]?
+    let instructions: [RpcInstruction]?
 }
 
 /// A single account key entry in a transaction message (jsonParsed format).
@@ -92,4 +93,11 @@ struct RpcAccountKey: Decodable {
     let pubkey: String
     let signer: Bool?
     let writable: Bool?
+}
+
+/// A top-level instruction in a transaction message (jsonParsed format). Both jsonParsed
+/// shapes (`parsed` and `partiallyDecoded`) carry the invoked `programId` directly; the
+/// remaining fields differ per shape and are not needed here, so only `programId` is decoded.
+struct RpcInstruction: Decodable {
+    let programId: String?
 }

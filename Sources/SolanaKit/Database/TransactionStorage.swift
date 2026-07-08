@@ -229,22 +229,35 @@ final class TransactionStorage {
 extension TransactionStorage: ITransactionStorage {
     // MARK: Transaction CRUD
 
+    /// Both write paths perform full-row rewrites (REPLACE on save, all-columns UPDATE on
+    /// update), so a writer that doesn't carry `programIds` would silently null an existing tag
+    /// and un-label a classified swap. The tag is immutable once known — a transaction's invoked
+    /// programs never change — so backfill it from the stored rows whenever incoming ones lack
+    /// it. One batched SELECT over the missing hashes (restricted to rows that HAVE a tag), not
+    /// a per-row lookup: history syncs funnel the whole batch through a single write.
+    private func backfillProgramIds(_ transactions: [Transaction], db: Database) throws {
+        let missing = transactions.filter { $0.programIds == nil }
+        guard !missing.isEmpty else { return }
+
+        // Typed record fetch (not a positional Row projection): reading `.hash`/`.programIds` off
+        // the decoded Transaction keeps the mapping robust against column-order changes.
+        let stored = try Transaction
+            .filter(missing.map(\.hash).contains(Transaction.Columns.hash))
+            .filter(Transaction.Columns.programIds != nil)
+            .fetchAll(db)
+            .reduce(into: [String: String]()) { dict, tx in
+                if let tag = tx.programIds { dict[tx.hash] = tag }
+            }
+
+        for transaction in missing {
+            transaction.programIds = stored[transaction.hash]
+        }
+    }
+
     func save(transactions: [Transaction]) throws {
         try dbPool.write { db in
+            try backfillProgramIds(transactions, db: db)
             for transaction in transactions {
-                // The REPLACE conflict policy makes every save a full-row rewrite, so a writer
-                // that doesn't carry `programIds` (or a fetch path where it can't be derived)
-                // would silently null an existing tag and un-label a classified swap. The tag is
-                // immutable once known — a transaction's invoked programs never change — so
-                // backfill it from the stored row whenever the incoming one lacks it.
-                if transaction.programIds == nil,
-                   let existing = try Transaction
-                   .filter(Transaction.Columns.hash == transaction.hash)
-                   .fetchOne(db),
-                   let existingProgramIds = existing.programIds
-                {
-                    transaction.programIds = existingProgramIds
-                }
                 try transaction.save(db)
             }
         }
@@ -276,6 +289,7 @@ extension TransactionStorage: ITransactionStorage {
 
     func updateTransactions(_ transactions: [Transaction]) throws {
         try dbPool.write { db in
+            try backfillProgramIds(transactions, db: db)
             for transaction in transactions {
                 try transaction.update(db)
             }

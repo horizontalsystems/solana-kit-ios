@@ -65,57 +65,20 @@ final class PendingTransactionSyncer {
                 confirmedResponse = try await rpcApiProvider.getTransaction(signature: pendingTx.hash)
             } catch {}
 
+            // Mutate the fetched record (Transaction is a class) instead of reconstructing it
+            // field-by-field — columns not named below keep their stored values automatically,
+            // so a new column (like programIds once was) can't be silently dropped here.
             if let response = confirmedResponse {
-                let err = response.meta?.err?.description
-                updatedTransactions.append(Transaction(
-                    hash: pendingTx.hash,
-                    timestamp: pendingTx.timestamp,
-                    fee: pendingTx.fee,
-                    from: pendingTx.from,
-                    to: pendingTx.to,
-                    amount: pendingTx.amount,
-                    error: err,
-                    pending: false,
-                    blockHash: pendingTx.blockHash,
-                    lastValidBlockHeight: pendingTx.lastValidBlockHeight,
-                    base64Encoded: pendingTx.base64Encoded,
-                    retryCount: pendingTx.retryCount,
-                    programIds: pendingTx.programIds
-                ))
+                pendingTx.error = response.meta?.err?.description
+                pendingTx.pending = false
             } else if currentBlockHeight <= pendingTx.lastValidBlockHeight {
                 await resendTransaction(base64Encoded: pendingTx.base64Encoded)
-                updatedTransactions.append(Transaction(
-                    hash: pendingTx.hash,
-                    timestamp: pendingTx.timestamp,
-                    fee: pendingTx.fee,
-                    from: pendingTx.from,
-                    to: pendingTx.to,
-                    amount: pendingTx.amount,
-                    error: pendingTx.error,
-                    pending: true,
-                    blockHash: pendingTx.blockHash,
-                    lastValidBlockHeight: pendingTx.lastValidBlockHeight,
-                    base64Encoded: pendingTx.base64Encoded,
-                    retryCount: pendingTx.retryCount + 1,
-                    programIds: pendingTx.programIds
-                ))
+                pendingTx.retryCount += 1
             } else {
-                updatedTransactions.append(Transaction(
-                    hash: pendingTx.hash,
-                    timestamp: pendingTx.timestamp,
-                    fee: pendingTx.fee,
-                    from: pendingTx.from,
-                    to: pendingTx.to,
-                    amount: pendingTx.amount,
-                    error: "BlockHash expired",
-                    pending: false,
-                    blockHash: pendingTx.blockHash,
-                    lastValidBlockHeight: pendingTx.lastValidBlockHeight,
-                    base64Encoded: pendingTx.base64Encoded,
-                    retryCount: pendingTx.retryCount,
-                    programIds: pendingTx.programIds
-                ))
+                pendingTx.error = "BlockHash expired"
+                pendingTx.pending = false
             }
+            updatedTransactions.append(pendingTx)
         }
 
         guard !updatedTransactions.isEmpty else { return }

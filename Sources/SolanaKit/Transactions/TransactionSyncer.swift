@@ -299,10 +299,14 @@ final class TransactionSyncer {
             amount: amountString,
             error: errorString,
             pending: false,
-            // Program ids always live in the static account keys (the runtime forbids loading
-            // programs from lookup tables), so intersecting accountKeys with the allowlist is a
-            // reliable "did this tx touch a known DEX" signal (e.g. Jupiter → render as a swap).
-            programIds: KnownPrograms.recognized(in: accountKeys)
+            // Derive from the INVOKED program of each top-level instruction (jsonParsed carries
+            // `programId` per instruction) — never from accountKeys presence, which would also
+            // match transactions that merely reference a program (e.g. the wallet receiving the
+            // tail of someone else's Jupiter swap) and, with jsonParsed, lookup-table-loaded
+            // addresses. Matches the send-path derivation in TransactionManager step 9.
+            programIds: KnownPrograms.recognized(
+                in: response.transaction?.message?.instructions?.compactMap(\.programId) ?? []
+            )
         )
 
         logger?.verbose("TransactionSyncer: tx \(signature) — fee: \(feeString), SOL from: \(solFrom ?? "nil") to: \(solTo ?? "nil"), amount: \(amountString ?? "nil"), tokenTransfers: \(tokenTransfers.count), error: \(errorString ?? "none")")

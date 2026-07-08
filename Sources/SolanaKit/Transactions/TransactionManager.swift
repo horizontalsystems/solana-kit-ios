@@ -157,20 +157,25 @@ final class TransactionManager {
 
         for tx in transactions {
             if let existing = existingFullByHash[tx.hash] {
-                let merged = Transaction(
-                    hash: tx.hash,
-                    timestamp: tx.timestamp,
-                    fee: tx.fee,
-                    from: tx.from ?? existing.transaction.from,
-                    to: tx.to ?? existing.transaction.to,
-                    amount: tx.amount ?? existing.transaction.amount,
-                    error: tx.error,
-                    pending: false,
-                    blockHash: existing.transaction.blockHash,
-                    lastValidBlockHeight: existing.transaction.lastValidBlockHeight,
-                    base64Encoded: existing.transaction.base64Encoded,
-                    retryCount: existing.transaction.retryCount
-                )
+                // Merge by MUTATING the stored record (Transaction is a class) instead of
+                // reconstructing it field-by-field: columns not named here (blockHash,
+                // lastValidBlockHeight, base64Encoded, retryCount, and any future ones) keep
+                // their stored values automatically, so a new column can't be silently nulled
+                // by an incomplete constructor call.
+                let merged = existing.transaction
+                // Keep the stored timestamp when the confirmed record reports none (blockTime can
+                // be null on a just-confirmed tx) — the pending row's send-time value beats
+                // overwriting it with 0, which would jump the row to 1970.
+                merged.timestamp = tx.timestamp != 0 ? tx.timestamp : merged.timestamp
+                merged.fee = tx.fee
+                merged.from = tx.from ?? merged.from
+                merged.to = tx.to ?? merged.to
+                merged.amount = tx.amount ?? merged.amount
+                merged.error = tx.error
+                merged.pending = false
+                // Freshly derived tag wins (the stored one may predate the program joining
+                // KnownPrograms); fall back to the stored value when the sync derived none.
+                merged.programIds = tx.programIds ?? merged.programIds
                 mergedTransactions.append(merged)
 
                 // If synced has no token transfers but DB has some, collect their mint
@@ -404,7 +409,9 @@ final class TransactionManager {
     /// arrive as raw wire bytes with a placeholder (all-zero) fee-payer signature. The caller
     /// provides a `Signer` whose key material matches the fee payer embedded in the message.
     ///
-    /// Steps mirror Android `SolanaKit.sendRawTransaction()`:
+    /// Steps mirror Android `SolanaKit.sendRawTransaction()` — EXCEPT steps 1b and 7, which are
+    /// iOS-only for now (pre-signing blockhash refresh; Android still fetches post-broadcast and
+    /// likely has the stale-blockhash bug this fixes — port it):
     /// 1. Deserialize raw bytes → `(signatures, message)`.
     ///    1b. Refresh `recentBlockhash` pre-signing (single-signer txs only) — quote-time
     ///        blockhashes expire in ~60-90s and would fail broadcast with "Blockhash not found".
@@ -413,7 +420,7 @@ final class TransactionManager {
     /// 4. Replace the fee-payer signature slot (index 0) with the new signature.
     /// 5. Re-serialize the full transaction and base64-encode.
     /// 6. Broadcast via `sendTransaction`.
-    /// 7. Reuse the step-1b blockhash response for `lastValidBlockHeight` (pending-tx expiry tracking).
+    /// 7. Resolve `lastValidBlockHeight` for pending-tx expiry tracking (see inline comment).
     /// 8. Estimate fee from ComputeBudget instructions.
     /// 9. Persist a pending `Transaction` record and emit via `transactionsSubject`.
     ///
@@ -426,16 +433,22 @@ final class TransactionManager {
         // 1. Deserialize.
         var (signatures, message) = try SolanaSerializer.deserialize(transactionData: rawTransaction)
 
-        // 1b. Refresh the recent blockhash just before signing. Transactions built at quote time
-        //     (e.g. server-assembled Jupiter swaps) routinely outlive their embedded blockhash
-        //     (~60-90s) while the user reviews the confirmation screen — broadcasting then fails
-        //     with "Blockhash not found". Replacing it is only safe while nobody else has signed
-        //     (a co-signature covers the old bytes), so limit to single-signer transactions.
-        //     The response is reused below for `lastValidBlockHeight`, which then describes the
-        //     blockhash actually embedded in the broadcast transaction.
-        let blockhashResponse = try await rpcApiProvider.getLatestBlockhash()
-        if signatures.count <= 1, let fresh = try? Base58.decode(blockhashResponse.blockhash), fresh.count == 32 {
-            message.recentBlockhash = fresh
+        // 1b. Refresh the recent blockhash just before signing. Externally-built transactions
+        //     routinely outlive their embedded blockhash (~60-90s) while the user reviews a
+        //     confirmation screen — broadcasting then fails with "Blockhash not found".
+        //     Replacing it is only safe while nobody else has signed (a co-signature covers the
+        //     old bytes), so it is limited to single-signer transactions — and the RPC fetch is
+        //     equally limited, keeping the co-signed path free of a pre-broadcast dependency
+        //     (a transient getLatestBlockhash failure must not abort a send whose embedded
+        //     blockhash is still valid). `refreshedBlockhash` is non-nil only when the message
+        //     was actually rewritten.
+        var refreshedBlockhash: RpcBlockhashResponse? = nil
+        if signatures.count <= 1 {
+            let response = try await rpcApiProvider.getLatestBlockhash()
+            if let fresh = try? Base58.decode(response.blockhash), fresh.count == 32 {
+                message.recentBlockhash = fresh
+                refreshedBlockhash = response
+            }
         }
 
         // 2. Re-serialize the message bytes — this is the data that must be signed.
@@ -459,17 +472,26 @@ final class TransactionManager {
         // 6. Broadcast.
         let txHash = try await rpcApiProvider.sendTransaction(serializedBase64: base64Tx)
 
-        // 7. `blockhashResponse` was fetched in step 1b, pre-signing — its `lastValidBlockHeight`
-        //    matches the blockhash actually embedded in the transaction.
+        // 7. lastValidBlockHeight for pending-expiry tracking. When step 1b rewrote the message,
+        //    the reused response describes the blockhash actually embedded. Otherwise (co-signed
+        //    tx, or a malformed RPC blockhash) fetch now, post-broadcast, as before 1.0.3 — the
+        //    height is then an UPPER BOUND for the older embedded blockhash, so expiry detection
+        //    can lag but never fires early.
+        let blockhashResponse: RpcBlockhashResponse
+        if let refreshedBlockhash {
+            blockhashResponse = refreshedBlockhash
+        } else {
+            blockhashResponse = try await rpcApiProvider.getLatestBlockhash()
+        }
 
         // 8. Estimate fee from ComputeBudget instructions.
         let feeSol = ComputeBudgetProgram.calculateFee(from: message, baseFeeLamports: Kit.baseFeeLamports)
 
-        // 9. Construct pending Transaction record.
-        //    blockHash comes from the message itself; lastValidBlockHeight from the fresh poll.
-        //    programIds: exact program ids from the compiled instructions (programs are always
-        //    static account keys), filtered to the recognized set — lets clients render e.g. a
-        //    Jupiter interaction as a swap while it is still pending.
+        // 9. Construct pending Transaction record. blockHash comes from the (possibly refreshed)
+        //    message itself — always the broadcast bytes. programIds: the program invoked by each
+        //    compiled instruction (program ids are always static account keys), filtered to the
+        //    recognized set — lets clients render e.g. a Jupiter interaction as a swap while it
+        //    is still pending. Same instruction-based derivation as TransactionSyncer's.
         let invokedPrograms = message.instructions.compactMap { ix -> String? in
             let index = Int(ix.programIdIndex)
             return index < message.accountKeys.count ? message.accountKeys[index].base58 : nil
