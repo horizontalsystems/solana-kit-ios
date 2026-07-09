@@ -12,8 +12,11 @@ public enum KnownPrograms {
     /// Jupiter aggregator v6 (`jupiterSwapProgramId`).
     public static let jupiterV6 = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
 
+    /// LI.FI executor program (logs "LI.FI TX"); the entry point of a LI.FI Solana swap/bridge.
+    public static let lifi = "3i5JeuZuUxeKtVysUnwQNGerJP2bSMX9fTFfS4Nxe3Br"
+
     /// All recognized program ids.
-    public static let all: Set<String> = [jupiterV6]
+    public static let all: Set<String> = [jupiterV6, lifi]
 
     /// The recognized subset of `candidates`, deduplicated (first occurrence wins, order
     /// preserved) and space-joined for `Transaction.programIds`; `nil` when none are recognized.
