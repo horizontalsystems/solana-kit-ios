@@ -65,8 +65,13 @@ final class TokenAccountManager {
         syncState = .syncing(progress: nil)
 
         do {
-            // 1. Fetch all on-chain SPL token accounts for this address.
-            let rpcKeyedAccounts = try await rpcApiProvider.getTokenAccountsByOwner(address: address)
+            // 1. Fetch all on-chain SPL token accounts for this address — both token programs:
+            // token-2022 accounts are invisible to a classic-program-filtered request.
+            // The token-2022 call is fail-soft: its failure must not stop classic balances
+            // from updating; stored token-2022 rows just stay stale until the next sync.
+            let classicAccounts = try await rpcApiProvider.getTokenAccountsByOwner(address: address, programId: .tokenProgramId)
+            let token2022Accounts = (try? await rpcApiProvider.getTokenAccountsByOwner(address: address, programId: .token2022ProgramId)) ?? []
+            let rpcKeyedAccounts = classicAccounts + token2022Accounts
 
             // 2. Convert each RPC result to a TokenAccount record.
             let tokenAccounts = rpcKeyedAccounts.map { rpcAccount -> TokenAccount in

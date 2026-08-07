@@ -7,12 +7,12 @@ import Foundation
 ///
 /// Response shape: `{"context":{...},"value":[RpcKeyedAccount,...]}`
 class GetTokenAccountsByOwnerJsonRpc: JsonRpc<[RpcKeyedAccount]> {
-    init(ownerAddress: String) {
+    init(ownerAddress: String, programId: PublicKey = .tokenProgramId) {
         super.init(
             method: "getTokenAccountsByOwner",
             params: [
                 ownerAddress,
-                ["programId": PublicKey.tokenProgramId.base58],
+                ["programId": programId.base58],
                 ["encoding": "jsonParsed"],
             ]
         )

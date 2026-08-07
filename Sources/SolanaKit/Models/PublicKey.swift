@@ -51,6 +51,7 @@ extension PublicKey {
     // swiftlint:disable force_try
     static let systemProgramId                  = try! PublicKey("11111111111111111111111111111111")
     static let tokenProgramId                   = try! PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+    static let token2022ProgramId               = try! PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
     static let associatedTokenProgramId         = try! PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
     static let sysvarRentProgramId              = try! PublicKey("SysvarRent111111111111111111111111111111111")
     static let computeBudgetProgramId           = try! PublicKey("ComputeBudget111111111111111111111111111111")

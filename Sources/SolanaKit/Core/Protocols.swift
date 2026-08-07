@@ -229,8 +229,8 @@ extension IRpcApiProvider {
         try await fetch(rpc: GetBlockHeightJsonRpc())
     }
 
-    func getTokenAccountsByOwner(address: String) async throws -> [RpcKeyedAccount] {
-        try await fetch(rpc: GetTokenAccountsByOwnerJsonRpc(ownerAddress: address))
+    func getTokenAccountsByOwner(address: String, programId: PublicKey = .tokenProgramId) async throws -> [RpcKeyedAccount] {
+        try await fetch(rpc: GetTokenAccountsByOwnerJsonRpc(ownerAddress: address, programId: programId))
     }
 
     func getSignaturesForAddress(
