@@ -176,6 +176,7 @@ final class TransactionManager {
                 // Freshly derived tag wins (the stored one may predate the program joining
                 // KnownPrograms); fall back to the stored value when the sync derived none.
                 merged.programIds = tx.programIds ?? merged.programIds
+                merged.createdTokenAccount = tx.createdTokenAccount ?? merged.createdTokenAccount
                 mergedTransactions.append(merged)
 
                 // If synced has no token transfers but DB has some, collect their mint
@@ -322,12 +323,31 @@ final class TransactionManager {
         guard let senderFullTokenAccount = storage.fullTokenAccount(mintAddress: mintAddress) else {
             throw SendError.tokenAccountNotFound(mintAddress)
         }
-        let senderATA = try PublicKey(senderFullTokenAccount.tokenAccount.address)
 
-        // 2. Derive recipient's ATA address.
+        // 2. A mint is Token-2022 when its account is owned by the Token-2022 program. Resolved at
+        //    send time (mirrors Android): a missing account reads as classic, an RPC failure fails
+        //    the send.
+        let mintInfos = try await rpcApiProvider.getMultipleAccounts(addresses: [mintAddress])
+        let isToken2022 = mintInfos.first.flatMap { $0 }?.owner == PublicKey.token2022ProgramId.base58
+        let tokenProgramId: PublicKey = isToken2022 ? .token2022ProgramId : .tokenProgramId
+
+        // 3. Resolve source and destination token accounts. Token-2022 derives BOTH with the
+        //    Token-2022 program id in the PDA seeds (as Android's Token2022Sender); classic keeps
+        //    the stored sender account.
+        let senderATA: PublicKey
+        if isToken2022 {
+            senderATA = try AssociatedTokenAccountProgram.associatedTokenAddress(
+                wallet: senderPublicKey,
+                mint: mintPublicKey,
+                tokenProgramId: tokenProgramId
+            )
+        } else {
+            senderATA = try PublicKey(senderFullTokenAccount.tokenAccount.address)
+        }
         let recipientATA = try AssociatedTokenAccountProgram.associatedTokenAddress(
             wallet: recipientPublicKey,
-            mint: mintPublicKey
+            mint: mintPublicKey,
+            tokenProgramId: tokenProgramId
         )
 
         // Guard: sender and recipient ATAs must differ.
@@ -335,30 +355,45 @@ final class TransactionManager {
             throw SendError.sameSourceAndDestination
         }
 
-        // 3. Check whether recipient's ATA exists on-chain.
+        // 4. Check whether recipient's ATA exists on-chain.
         let recipientATAAccounts = try await rpcApiProvider.getMultipleAccounts(addresses: [recipientATA.base58])
         // `getMultipleAccounts` returns `[BufferInfo?]`; a non-nil inner element means the account exists.
         let recipientATAExists = recipientATAAccounts.first.flatMap { $0 } != nil
 
-        // 4. Fetch recent blockhash.
+        // 5. Fetch recent blockhash.
         let blockhashResponse = try await rpcApiProvider.getLatestBlockhash()
 
-        // 5. Build instructions.
+        // 6. Build instructions.
         var instructions: [TransactionInstruction] = priorityFeeInstructions()
         if !recipientATAExists {
             instructions.append(AssociatedTokenAccountProgram.createIdempotent(
                 payer: senderPublicKey,
                 associatedToken: recipientATA,
                 owner: recipientPublicKey,
-                mint: mintPublicKey
+                mint: mintPublicKey,
+                tokenProgramId: tokenProgramId
             ))
         }
-        instructions.append(TokenProgram.transfer(
-            source: senderATA,
-            destination: recipientATA,
-            authority: senderPublicKey,
-            amount: amount
-        ))
+        if isToken2022 {
+            // Fee-bearing Token-2022 mints reject plain Transfer; TransferChecked carries the
+            // mint + decimals the Token-2022 program requires.
+            instructions.append(TokenProgram.transferChecked(
+                source: senderATA,
+                mint: mintPublicKey,
+                destination: recipientATA,
+                authority: senderPublicKey,
+                amount: amount,
+                decimals: UInt8(senderFullTokenAccount.tokenAccount.decimals),
+                tokenProgramId: tokenProgramId
+            ))
+        } else {
+            instructions.append(TokenProgram.transfer(
+                source: senderATA,
+                destination: recipientATA,
+                authority: senderPublicKey,
+                amount: amount
+            ))
+        }
 
         // 6. Serialize, sign, build wire transaction, broadcast.
         let (base64Tx, txHash) = try await serializeSignAndSend(
@@ -379,7 +414,9 @@ final class TransactionManager {
             blockHash: blockhashResponse.blockhash,
             lastValidBlockHeight: blockhashResponse.lastValidBlockHeight,
             base64Encoded: base64Tx,
-            retryCount: 0
+            retryCount: 0,
+            // Known exactly here (unlike synced rows, which infer it from invoked programs).
+            createdTokenAccount: !recipientATAExists
         )
         let tokenTransfer = TokenTransfer(
             transactionHash: txHash,
@@ -509,7 +546,8 @@ final class TransactionManager {
             lastValidBlockHeight: blockhashResponse.lastValidBlockHeight,
             base64Encoded: base64Tx,
             retryCount: 0,
-            programIds: KnownPrograms.recognized(in: invokedPrograms)
+            programIds: KnownPrograms.recognized(in: invokedPrograms),
+            createdTokenAccount: KnownPrograms.createsTokenAccount(in: invokedPrograms)
         )
 
         // 10. Persist and emit.

@@ -18,12 +18,14 @@ enum AssociatedTokenAccountProgram {
     /// - Parameters:
     ///   - wallet: The wallet public key that owns the ATA.
     ///   - mint: The token mint public key.
+    ///   - tokenProgramId: The program owning the mint (`.tokenProgramId` or `.token2022ProgramId`) —
+    ///     part of the PDA seeds, so a Token-2022 mint yields a DIFFERENT address than classic.
     /// - Returns: The derived ATA `PublicKey` (bump seed is discarded).
     /// - Throws: `PublicKey.PDAError` if no valid address is found.
-    static func associatedTokenAddress(wallet: PublicKey, mint: PublicKey) throws -> PublicKey {
+    static func associatedTokenAddress(wallet: PublicKey, mint: PublicKey, tokenProgramId: PublicKey) throws -> PublicKey {
         let seeds: [Data] = [
             wallet.data,
-            PublicKey.tokenProgramId.data,
+            tokenProgramId.data,
             mint.data,
         ]
         let (address, _) = try PublicKey.findProgramAddress(seeds: seeds, programId: .associatedTokenProgramId)
@@ -59,7 +61,8 @@ enum AssociatedTokenAccountProgram {
         payer: PublicKey,
         associatedToken: PublicKey,
         owner: PublicKey,
-        mint: PublicKey
+        mint: PublicKey,
+        tokenProgramId: PublicKey
     ) -> TransactionInstruction {
         // Instruction index 1 = CreateIdempotent.
         let data = Data([1])
@@ -70,7 +73,7 @@ enum AssociatedTokenAccountProgram {
             AccountMeta(publicKey: owner,                          isSigner: false, isWritable: false),
             AccountMeta(publicKey: mint,                           isSigner: false, isWritable: false),
             AccountMeta(publicKey: .systemProgramId,               isSigner: false, isWritable: false),
-            AccountMeta(publicKey: .tokenProgramId,                isSigner: false, isWritable: false),
+            AccountMeta(publicKey: tokenProgramId,                 isSigner: false, isWritable: false),
             AccountMeta(publicKey: .sysvarRentProgramId,           isSigner: false, isWritable: false),
         ]
 

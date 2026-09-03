@@ -85,7 +85,8 @@ enum TokenProgram {
         destination: PublicKey,
         authority: PublicKey,
         amount: UInt64,
-        decimals: UInt8
+        decimals: UInt8,
+        tokenProgramId: PublicKey
     ) -> TransactionInstruction {
         var data = Data()
 
@@ -107,7 +108,7 @@ enum TokenProgram {
         ]
 
         return TransactionInstruction(
-            programId: .tokenProgramId,
+            programId: tokenProgramId,
             keys: keys,
             data: data
         )

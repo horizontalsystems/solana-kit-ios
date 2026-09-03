@@ -218,7 +218,23 @@ final class TransactionSyncer {
                 preByKey["\(balance.accountIndex)_\(balance.mint)"] = balance
             }
 
-            let allKeys = Set(postByKey.keys).union(Set(preByKey.keys))
+            // Token accounts of THIS transaction, all owners including ours — the set the
+            // counterparty substitution below checks against.
+            var tokenBalanceAccountKeys = Set<String>()
+            for balance in (meta.postTokenBalances ?? []) + (meta.preTokenBalances ?? []) {
+                let index = balance.accountIndex
+                if index >= 0, index < accountKeys.count {
+                    tokenBalanceAccountKeys.insert(accountKeys[index])
+                }
+            }
+
+            // Deterministic order: Set iteration is unordered in Swift, and both the SPL-only
+            // from/to inference and the counterparty substitution key off the FIRST transfer.
+            let allKeys = Set(postByKey.keys).union(Set(preByKey.keys)).sorted { lhs, rhs in
+                let lhsIndex = Int(lhs.prefix(while: { $0 != "_" })) ?? 0
+                let rhsIndex = Int(rhs.prefix(while: { $0 != "_" })) ?? 0
+                return lhsIndex != rhsIndex ? lhsIndex < rhsIndex : lhs < rhs
+            }
 
             for key in allKeys {
                 let postBalance = postByKey[key]
@@ -274,6 +290,20 @@ final class TransactionSyncer {
                 }
             }
 
+            // A rent-funded token account can win the SOL-balance heuristic (largest increase)
+            // and land in from/to. When the transaction carries token transfers and that SOL
+            // counterparty is one of ITS OWN token accounts, substitute the owner wallet on the
+            // matching side; in every other case the SOL heuristic stands. Mirrors android d72f087.
+            if let primary = tokenTransfers.first {
+                let counterparty = mintCounterparties[primary.mintAddress]
+                if !primary.incoming, let currentTo = solTo, tokenBalanceAccountKeys.contains(currentTo), let receiver = counterparty?.receiver {
+                    solTo = receiver
+                }
+                if primary.incoming, let currentFrom = solFrom, tokenBalanceAccountKeys.contains(currentFrom), let sender = counterparty?.sender {
+                    solFrom = sender
+                }
+            }
+
             // Infer from/to for SPL-only transactions (no SOL counterparty detected).
             // Matches Android: only runs when the SOL balance heuristic produced no result.
             if solFrom == nil, solTo == nil, let primary = tokenTransfers.first {
@@ -289,6 +319,7 @@ final class TransactionSyncer {
         }
 
         let errorString = meta?.err?.description
+        let invokedPrograms = response.transaction?.message?.instructions?.compactMap(\.programId) ?? []
 
         let transaction = Transaction(
             hash: signature,
@@ -304,9 +335,8 @@ final class TransactionSyncer {
             // match transactions that merely reference a program (e.g. the wallet receiving the
             // tail of someone else's Jupiter swap) and, with jsonParsed, lookup-table-loaded
             // addresses. Matches the send-path derivation in TransactionManager step 9.
-            programIds: KnownPrograms.recognized(
-                in: response.transaction?.message?.instructions?.compactMap(\.programId) ?? []
-            )
+            programIds: KnownPrograms.recognized(in: invokedPrograms),
+            createdTokenAccount: KnownPrograms.createsTokenAccount(in: invokedPrograms)
         )
 
         logger?.verbose("TransactionSyncer: tx \(signature) — fee: \(feeString), SOL from: \(solFrom ?? "nil") to: \(solTo ?? "nil"), amount: \(amountString ?? "nil"), tokenTransfers: \(tokenTransfers.count), error: \(errorString ?? "none")")

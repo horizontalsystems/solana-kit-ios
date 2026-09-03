@@ -109,6 +109,12 @@ final class TransactionStorage {
             }
         }
 
+        migrator.registerMigration("addCreatedTokenAccountToTransactions") { db in
+            try db.alter(table: Transaction.databaseTableName) { t in
+                t.add(column: Transaction.Columns.createdTokenAccount.name, .boolean)
+            }
+        }
+
         return migrator
     }
 
