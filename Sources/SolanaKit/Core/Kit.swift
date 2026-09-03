@@ -519,6 +519,48 @@ public class Kit {
         return try estimateFee(rawTransaction: rawData)
     }
 
+    // MARK: - Raw transaction signing
+
+    /// Base58 keys of the accounts that must sign a raw serialized transaction —
+    /// the first `numRequiredSignatures` account keys of its message.
+    ///
+    /// - Parameter rawTransaction: Raw transaction wire bytes (NOT base64-encoded).
+    /// - Throws: `SolanaSerializer.SerializerError.invalidTransactionData` on malformed input.
+    public static func requiredSigners(rawTransaction: Data) throws -> [String] {
+        let (_, message) = try SolanaSerializer.deserialize(transactionData: rawTransaction)
+        return message.accountKeys.prefix(Int(message.header.numRequiredSignatures)).map(\.base58)
+    }
+
+    /// Signs a raw serialized transaction with `signer` without modifying its message.
+    ///
+    /// The signature is written into the slot of `signer.address` among the required signers;
+    /// signatures already present for other signers are preserved. Unlike `sendRawTransaction`,
+    /// the recent blockhash is left untouched, so the signed bytes match what the caller built.
+    ///
+    /// - Parameters:
+    ///   - rawTransaction: Raw transaction wire bytes (NOT base64-encoded), possibly partially signed.
+    ///   - signer: The `Signer` whose key is one of the transaction's required signers.
+    /// - Returns: The fully serialized signed transaction and the signature produced by `signer`.
+    /// - Throws: `SignRawTransactionError.signerNotRequired` if `signer` is not a required signer;
+    ///   `SolanaSerializer.SerializerError` on malformed input.
+    public static func sign(rawTransaction: Data, signer: Signer) throws -> (transaction: Data, signature: Data) {
+        var (signatures, message) = try SolanaSerializer.deserialize(transactionData: rawTransaction)
+        let requiredCount = Int(message.header.numRequiredSignatures)
+
+        guard let index = message.accountKeys.prefix(requiredCount).firstIndex(of: signer.address.publicKey) else {
+            throw SignRawTransactionError.signerNotRequired(signer.address.base58)
+        }
+
+        if signatures.count < requiredCount {
+            signatures += Array(repeating: Data(repeating: 0, count: 64), count: requiredCount - signatures.count)
+        }
+
+        let signature = try signer.sign(data: SolanaSerializer.serialize(message: message))
+        signatures[index] = signature
+
+        return (try SolanaSerializer.serialize(signatures: signatures, message: message), signature)
+    }
+
     // MARK: - Static cleanup
 
     /// Deletes all persisted data (both GRDB databases) for the given wallet identifier.
@@ -604,4 +646,12 @@ public enum SendError: Error {
     case sameSourceAndDestination
     /// One of the provided addresses could not be decoded as a valid Solana public key.
     case invalidAddress(String)
+}
+
+// MARK: - SignRawTransactionError
+
+/// Errors thrown by `Kit.sign(rawTransaction:signer:)`.
+public enum SignRawTransactionError: Error {
+    /// The signer's address is not among the transaction's required signers.
+    case signerNotRequired(String)
 }
