@@ -9,67 +9,67 @@ import Foundation
 ///   2. `serialize(message:)` → message bytes (what the signer hashes)
 ///   3. `serialize(signatures:message:)` → full transaction wire bytes
 ///   4. `buildTransaction(...)` / `serializeMessage(...)` — convenience wrappers
-enum SolanaSerializer {
+public enum SolanaSerializer {
 
     // MARK: - Nested types
 
     /// Solana message version — legacy (no prefix) or v0 (prefixed with `0x80`).
     ///
     /// Mirrors sol4k `TransactionMessage.MessageVersion`.
-    enum MessageVersion {
+    public enum MessageVersion {
         case legacy
         case v0
     }
 
-    struct MessageHeader {
+    public struct MessageHeader {
         /// Total number of accounts that must sign (writable-signers + readonly-signers).
-        let numRequiredSignatures: UInt8
+        public let numRequiredSignatures: UInt8
         /// Number of read-only accounts among the signers.
-        let numReadonlySignedAccounts: UInt8
+        public let numReadonlySignedAccounts: UInt8
         /// Number of read-only accounts among the non-signers.
-        let numReadonlyUnsignedAccounts: UInt8
+        public let numReadonlyUnsignedAccounts: UInt8
     }
 
-    struct CompiledInstruction {
+    public struct CompiledInstruction {
         /// Index into `CompiledMessage.accountKeys` for the program being invoked.
-        let programIdIndex: UInt8
+        public let programIdIndex: UInt8
         /// Indices into `CompiledMessage.accountKeys` for each account meta.
-        let accountIndices: [UInt8]
+        public let accountIndices: [UInt8]
         /// Raw instruction data bytes.
-        let data: Data
+        public let data: Data
     }
 
     /// A reference to an on-chain address lookup table embedded in a V0 message.
     ///
     /// Mirrors sol4k `CompiledAddressLookupTable`.
-    struct CompiledAddressLookupTable {
+    public struct CompiledAddressLookupTable {
         /// The public key of the address lookup table account.
-        let publicKey: PublicKey
+        public let publicKey: PublicKey
         /// Indices into the lookup table for accounts that are writable.
-        let writableIndexes: [UInt8]
+        public let writableIndexes: [UInt8]
         /// Indices into the lookup table for accounts that are read-only.
-        let readonlyIndexes: [UInt8]
+        public let readonlyIndexes: [UInt8]
     }
 
-    struct CompiledMessage {
-        let header: MessageHeader
+    public struct CompiledMessage {
+        public let header: MessageHeader
         /// All unique account keys in canonical order:
         /// writable-signers, readonly-signers, writable-non-signers, readonly-non-signers.
-        let accountKeys: [PublicKey]
+        public let accountKeys: [PublicKey]
         /// Raw 32-byte blockhash (already decoded from Base58). Mutable so an unsigned
         /// transaction's blockhash can be refreshed right before signing (see
         /// `TransactionManager.sendRawTransaction` — quote-time blockhashes expire in ~60-90s).
-        var recentBlockhash: Data
-        let instructions: [CompiledInstruction]
+        public var recentBlockhash: Data
+        public let instructions: [CompiledInstruction]
         /// Message format version. `.legacy` for all compile-generated messages.
-        let version: MessageVersion
+        public let version: MessageVersion
         /// Address lookup tables referenced by this message. Empty for legacy messages.
-        let addressLookupTables: [CompiledAddressLookupTable]
+        public let addressLookupTables: [CompiledAddressLookupTable]
     }
 
     // MARK: - Errors
 
-    enum SerializerError: Swift.Error {
+    public enum SerializerError: Swift.Error {
         case invalidBlockhash(String)
         case invalidSignatureLength(Int)
         case signatureCountMismatch(expected: Int, got: Int)
@@ -344,66 +344,56 @@ enum SolanaSerializer {
     /// - Parameter transactionData: Raw transaction wire bytes (NOT base64-encoded).
     /// - Returns: A tuple of the parsed signatures and the reconstructed `CompiledMessage`.
     /// - Throws: `SerializerError.invalidTransactionData` on malformed input.
-    static func deserialize(transactionData: Data) throws -> (signatures: [Data], message: CompiledMessage) {
-        var cursor = transactionData.startIndex
-
-        // Helper: copy `count` bytes into a fresh Data value and advance cursor.
-        func read(_ count: Int) throws -> Data {
-            let end = cursor + count
-            guard end <= transactionData.endIndex else {
-                throw SerializerError.invalidTransactionData(
-                    "Unexpected end of data at offset \(cursor - transactionData.startIndex), needed \(count) bytes"
-                )
-            }
-            let slice = Data(transactionData[cursor..<end])
-            cursor = end
-            return slice
-        }
-
-        // Helper: decode a compact-u16 value and advance cursor.
-        func readCompactU16() throws -> Int {
-            guard cursor < transactionData.endIndex else {
-                throw SerializerError.invalidTransactionData(
-                    "Unexpected end of data reading compact-u16 at offset \(cursor - transactionData.startIndex)"
-                )
-            }
-            let (value, bytesRead) = CompactU16.decode(transactionData[cursor...])
-            guard bytesRead > 0 else {
-                throw SerializerError.invalidTransactionData(
-                    "Failed to decode compact-u16 at offset \(cursor - transactionData.startIndex)"
-                )
-            }
-            cursor += bytesRead
-            return value
-        }
+    public static func deserialize(transactionData: Data) throws -> (signatures: [Data], message: CompiledMessage) {
+        var reader = Reader(data: transactionData)
 
         // ── 1. Signature count (compact-u16) ──────────────────────────────────
-        let sigCount = try readCompactU16()
+        let sigCount = try reader.readCompactU16()
 
         // ── 2. Signatures (64 bytes each) ─────────────────────────────────────
         var signatures = [Data]()
         signatures.reserveCapacity(sigCount)
         for _ in 0..<sigCount {
-            signatures.append(try read(64))
+            signatures.append(try reader.read(64))
         }
 
-        // ── 3. Detect message version ──────────────────────────────────────────
-        // After the signatures the next byte is either:
-        //   • numRequiredSignatures (< 0x80) → legacy message; do NOT consume it.
-        //   • A version prefix (>= 0x80)     → versioned message; consume and record.
-        guard cursor < transactionData.endIndex else {
+        guard reader.cursor < transactionData.endIndex else {
             throw SerializerError.invalidTransactionData("No message data after signatures")
         }
+
+        return (signatures: signatures, message: try deserialize(messageData: transactionData[reader.cursor...]))
+    }
+
+    /// Parses message wire bytes (the part of a transaction after its signatures) into a `CompiledMessage`.
+    ///
+    /// Detection: if the first byte is `< 0x80` it is the legacy message `numRequiredSignatures`
+    /// field. If `>= 0x80` it is a version prefix — consumed and recorded.
+    ///
+    /// - Parameter messageData: Raw message bytes — what `serialize(message:)` produces and what a signer signs.
+    /// - Throws: `SerializerError.invalidTransactionData` on malformed input.
+    public static func deserialize(messageData: Data) throws -> CompiledMessage {
+        var reader = Reader(data: messageData)
+
+        // ── 3. Detect message version ──────────────────────────────────────────
+        // The first byte is either:
+        //   • numRequiredSignatures (< 0x80) → legacy message; do NOT consume it.
+        //   • A version prefix (>= 0x80)     → versioned message; consume and record.
+        guard reader.cursor < messageData.endIndex else {
+            throw SerializerError.invalidTransactionData("No message data")
+        }
         let messageVersion: MessageVersion
-        if transactionData[cursor] >= 0x80 {
+        if messageData[reader.cursor] >= 0x80 {
+            guard messageData[reader.cursor] == 0x80 else {
+                throw SerializerError.invalidTransactionData("Unsupported message version")
+            }
             messageVersion = .v0
-            cursor += 1  // consume version byte
+            reader.cursor += 1  // consume version byte
         } else {
             messageVersion = .legacy
         }
 
         // ── 4. Message header (3 bytes) ────────────────────────────────────────
-        let headerData = try read(3)
+        let headerData = try reader.read(3)
         let header = MessageHeader(
             numRequiredSignatures:       headerData[headerData.startIndex],
             numReadonlySignedAccounts:   headerData[headerData.startIndex + 1],
@@ -411,39 +401,39 @@ enum SolanaSerializer {
         )
 
         // ── 5. Account keys ────────────────────────────────────────────────────
-        let keyCount = try readCompactU16()
+        let keyCount = try reader.readCompactU16()
         var accountKeys = [PublicKey]()
         accountKeys.reserveCapacity(keyCount)
         for _ in 0..<keyCount {
-            let keyData = try read(32)
+            let keyData = try reader.read(32)
             do {
                 accountKeys.append(try PublicKey(data: keyData))
             } catch {
                 throw SerializerError.invalidTransactionData(
-                    "Invalid public key at offset \(cursor - transactionData.startIndex - 32)"
+                    "Invalid public key at offset \(reader.cursor - messageData.startIndex - 32)"
                 )
             }
         }
 
         // ── 6. Recent blockhash (32 bytes) ────────────────────────────────────
-        let recentBlockhash = try read(32)
+        let recentBlockhash = try reader.read(32)
 
         // ── 7. Instructions ───────────────────────────────────────────────────
-        let ixCount = try readCompactU16()
+        let ixCount = try reader.readCompactU16()
         var instructions = [CompiledInstruction]()
         instructions.reserveCapacity(ixCount)
         for _ in 0..<ixCount {
             // Program ID index (1 byte).
-            let programIdIndex = try read(1)[0]
+            let programIdIndex = try reader.read(1)[0]
 
             // Account indices.
-            let acctCount = try readCompactU16()
-            let acctData  = try read(acctCount)
+            let acctCount = try reader.readCompactU16()
+            let acctData  = try reader.read(acctCount)
             let accountIndices = [UInt8](acctData)
 
             // Instruction data.
-            let dataLen = try readCompactU16()
-            let ixData  = try read(dataLen)
+            let dataLen = try reader.readCompactU16()
+            let ixData  = try reader.read(dataLen)
 
             instructions.append(CompiledInstruction(
                 programIdIndex: programIdIndex,
@@ -454,26 +444,26 @@ enum SolanaSerializer {
 
         // ── 8. Address lookup tables (V0 only) ────────────────────────────────
         var addressLookupTables = [CompiledAddressLookupTable]()
-        if case .v0 = messageVersion, cursor < transactionData.endIndex {
-            let tableCount = try readCompactU16()
+        if case .v0 = messageVersion {
+            let tableCount = try reader.readCompactU16()
             addressLookupTables.reserveCapacity(tableCount)
             for _ in 0..<tableCount {
                 // 32-byte public key.
-                let keyData = try read(32)
+                let keyData = try reader.read(32)
                 let tableKey: PublicKey
                 do {
                     tableKey = try PublicKey(data: keyData)
                 } catch {
                     throw SerializerError.invalidTransactionData(
-                        "Invalid ALT public key at offset \(cursor - transactionData.startIndex - 32)"
+                        "Invalid ALT public key at offset \(reader.cursor - messageData.startIndex - 32)"
                     )
                 }
                 // Writable indexes.
-                let writableCount = try readCompactU16()
-                let writableData = try read(writableCount)
+                let writableCount = try reader.readCompactU16()
+                let writableData = try reader.read(writableCount)
                 // Readonly indexes.
-                let readonlyCount = try readCompactU16()
-                let readonlyData = try read(readonlyCount)
+                let readonlyCount = try reader.readCompactU16()
+                let readonlyData = try reader.read(readonlyCount)
                 addressLookupTables.append(CompiledAddressLookupTable(
                     publicKey: tableKey,
                     writableIndexes: [UInt8](writableData),
@@ -482,7 +472,7 @@ enum SolanaSerializer {
             }
         }
 
-        let compiledMessage = CompiledMessage(
+        return CompiledMessage(
             header: header,
             accountKeys: accountKeys,
             recentBlockhash: recentBlockhash,
@@ -490,8 +480,47 @@ enum SolanaSerializer {
             version: messageVersion,
             addressLookupTables: addressLookupTables
         )
+    }
 
-        return (signatures: signatures, message: compiledMessage)
+    /// Sequential reader over wire bytes shared by the transaction and message deserializers.
+    private struct Reader {
+        let data: Data
+        var cursor: Data.Index
+
+        init(data: Data) {
+            self.data = data
+            cursor = data.startIndex
+        }
+
+        /// Copies `count` bytes into a fresh Data value and advances the cursor.
+        mutating func read(_ count: Int) throws -> Data {
+            let end = cursor + count
+            guard end <= data.endIndex else {
+                throw SerializerError.invalidTransactionData(
+                    "Unexpected end of data at offset \(cursor - data.startIndex), needed \(count) bytes"
+                )
+            }
+            let slice = Data(data[cursor..<end])
+            cursor = end
+            return slice
+        }
+
+        /// Decodes a compact-u16 value and advances the cursor.
+        mutating func readCompactU16() throws -> Int {
+            guard cursor < data.endIndex else {
+                throw SerializerError.invalidTransactionData(
+                    "Unexpected end of data reading compact-u16 at offset \(cursor - data.startIndex)"
+                )
+            }
+            let (value, bytesRead) = CompactU16.decode(data[cursor...])
+            guard bytesRead > 0 else {
+                throw SerializerError.invalidTransactionData(
+                    "Failed to decode compact-u16 at offset \(cursor - data.startIndex)"
+                )
+            }
+            cursor += bytesRead
+            return value
+        }
     }
 
     // MARK: - Convenience methods

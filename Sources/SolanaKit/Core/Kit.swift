@@ -528,7 +528,20 @@ public class Kit {
     /// - Throws: `SolanaSerializer.SerializerError.invalidTransactionData` on malformed input.
     public static func requiredSigners(rawTransaction: Data) throws -> [String] {
         let (_, message) = try SolanaSerializer.deserialize(transactionData: rawTransaction)
-        return message.accountKeys.prefix(Int(message.header.numRequiredSignatures)).map(\.base58)
+        return requiredSigners(of: message)
+    }
+
+    /// Base58 keys of the accounts that must sign a serialized message — the bytes a signer signs,
+    /// i.e. a transaction without its signatures section.
+    ///
+    /// - Parameter message: Raw message wire bytes (NOT base64-encoded).
+    /// - Throws: `SolanaSerializer.SerializerError.invalidTransactionData` on malformed input.
+    public static func requiredSigners(message: Data) throws -> [String] {
+        try requiredSigners(of: SolanaSerializer.deserialize(messageData: message))
+    }
+
+    private static func requiredSigners(of message: SolanaSerializer.CompiledMessage) -> [String] {
+        message.accountKeys.prefix(Int(message.header.numRequiredSignatures)).map(\.base58)
     }
 
     /// Signs a raw serialized transaction with `signer` without modifying its message.

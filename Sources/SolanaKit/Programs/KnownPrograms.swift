@@ -25,8 +25,11 @@ public enum KnownPrograms {
     /// programs means the transaction created a token account, paying ~0.002 SOL of rent.
     public static let associatedTokenAccount = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 
+    /// 1inch Fusion order / escrow program.
+    public static let oneInchFusion = "HNarfxC3kYMMhFkxUFeYb8wHVdPzY5t9pupqW5fL2meM"
+
     /// All recognized program ids.
-    public static let all: Set<String> = [jupiterV6, lifi, dflow]
+    public static let all: Set<String> = [jupiterV6, lifi, dflow, oneInchFusion]
 
     /// The recognized subset of `candidates`, deduplicated (first occurrence wins, order
     /// preserved) and space-joined for `Transaction.programIds`; `nil` when none are recognized.
